@@ -1,6 +1,6 @@
 import random
 import numpy as np
-from chainflow.engine import Tensor 
+from numpyflow.engine import Tensor 
 
 class Module:
     def zero_grad(self):
