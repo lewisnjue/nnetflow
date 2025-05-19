@@ -6,8 +6,22 @@ build-backend = "setuptools.build_meta"
 name = "nnetflow"
 version = "0.1.0"
 description = "A minimal neural network framework with autodiff"
+readme = "README.md"
 authors = [
   { name = "Your Name", email = "your.email@example.com" }
 ]
+license = { text = "MIT" }
 requires-python = ">=3.8"
 dependencies = ["numpy"]
+keywords = ["neural network", "autodiff", "deep learning", "numpy"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent"
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/nnetflow"
+Documentation = "https://github.com/yourusername/nnetflow#readme"
+Source = "https://github.com/yourusername/nnetflow"
+Issues = "https://github.com/yourusername/nnetflow/issues"
