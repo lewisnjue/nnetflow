@@ -12,7 +12,7 @@ for x, y in zip(X, Y):
     y_tensors = [Tensor([float(val)]) for val in y]
     data.append((x_tensors, y_tensors))
 
-model = MLP(nin=3, nouts=[8,16,16,4, 2])
+model = MLP(nin=3, nouts=[8, 2])
 
 loss_fn = MSELoss()
 optimizer = SGD(model.parameters(), lr=0.001)
