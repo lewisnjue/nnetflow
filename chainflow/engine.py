@@ -20,7 +20,7 @@ class Tensor:
         return grad
 
     def __add__(self, other):
-        assert isinstance(other, (int, Tensor)), "unsupported operation"
+        assert isinstance(other, (float, Tensor)), "unsupported operation"
         other = other if isinstance(other, Tensor) else Tensor([other])
         out_shape = np.broadcast_shapes(self.data.shape, other.data.shape)
         out = Tensor((self.data + other.data).flatten().tolist(), shape=out_shape, _children=(self, other), _op='+')
@@ -33,7 +33,7 @@ class Tensor:
         return out
 
     def __mul__(self, other):
-        assert isinstance(other, (int, Tensor)), "unsupported operation"
+        assert isinstance(other, (float, Tensor)), "unsupported operation"
         other = other if isinstance(other, Tensor) else Tensor([other])
         out_shape = np.broadcast_shapes(self.data.shape, other.data.shape)
         out = Tensor((self.data * other.data).flatten().tolist(), shape=out_shape, _children=(self, other), _op='*')
