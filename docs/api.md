@@ -1,10 +1,10 @@
 # API Reference
 
-## numpyflow.engine
+## nnetflow.engine
 
 - Tensor: Core tensor class with autodiff
 
-## numpyflow.nn
+## nnetflow.nn
 
 - MLP: Multilayer perceptron
 - SGD: Stochastic gradient descent optimizer

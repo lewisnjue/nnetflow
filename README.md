@@ -1,15 +1,15 @@
-# numpyflow
+# nnetflow
 
 A minimal neural network framework with autodiff, inspired by micrograd and pytorch.
 
 ## Installation
 
-pip install numpyflow
+pip install nnetflow
 
 ## Usage
 
-from numpyflow.nn import MLP, SGD, MSELoss
-from numpyflow.engine import Tensor
+from nnetflow.nn import MLP, SGD, MSELoss
+from nnetflow.engine import Tensor
 
 model = MLP(nin=3, nouts=[8, 2])
 # ...

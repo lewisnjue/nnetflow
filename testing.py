@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.datasets import make_regression
-from numpyflow.nn import MLP, SGD, MSELoss
-from numpyflow.engine import Tensor
+from nnetflow.nn import MLP, SGD, MSELoss
+from nnetflow.engine import Tensor
 
 X, Y = make_regression(n_samples=100, n_features=3, n_targets=2, noise=0.1, random_state=42)
 

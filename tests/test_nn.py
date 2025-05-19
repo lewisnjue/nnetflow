@@ -1,6 +1,6 @@
 import unittest
-from numpyflow.nn import MLP
-from numpyflow.engine import Tensor
+from nnetflow.nn import MLP
+from nnetflow.engine import Tensor
 
 class TestNN(unittest.TestCase):
     def test_mlp_forward(self):

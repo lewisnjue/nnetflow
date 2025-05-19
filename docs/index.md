@@ -1,15 +1,15 @@
-# numpyflow Documentation
+# nnetflow Documentation
 
-numpyflow is a minimal neural network framework with autodiff.
+nnetflow is a minimal neural network framework with autodiff.
 
 ## Installation
 
-pip install numpyflow
+pip install nnetflow
 
 ## Modules
 
-- numpyflow.engine: Core Tensor and autodiff
-- numpyflow.nn: Layers, MLP, optimizers, loss functions
+- nnetflow.engine: Core Tensor and autodiff
+- nnetflow.nn: Layers, MLP, optimizers, loss functions
 
 ## Example
 

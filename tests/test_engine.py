@@ -1,5 +1,5 @@
 import unittest
-from numpyflow.engine import Tensor
+from nnetflow.engine import Tensor
 
 class TestEngine(unittest.TestCase):
     def test_add(self):

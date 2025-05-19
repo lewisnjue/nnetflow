@@ -1,12 +1,12 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="numpyflow",
+    name="nnetflow",
     version="0.1.0",
     description="A minimal neural network framework with autodiff",
-    author="Your Name",
-    author_email="your.email@example.com",
-    url="https://github.com/yourusername/numpyflow",
+    author="Lewis njue",
+    author_email="lewiskinyuanjue.ke@gmail.com",
+    url="https://github.com/lewisnjue/nnetflow",
     packages=find_packages(),
     install_requires=[
         "numpy",
