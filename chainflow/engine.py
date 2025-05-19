@@ -33,6 +33,9 @@ class Tensor:
         return out
 
     def __mul__(self, other):
+        # Allow int as well as float and Tensor
+        if isinstance(other, int):
+            other = float(other)
         assert isinstance(other, (float, Tensor)), "unsupported operation"
         other = other if isinstance(other, Tensor) else Tensor([other])
         out_shape = np.broadcast_shapes(self.data.shape, other.data.shape)
@@ -85,7 +88,8 @@ class Tensor:
             v._backward()
 
     def __neg__(self):
-        return self * -1
+        # Allow negation to work with int/float
+        return self * -1.0
 
     def __radd__(self, other):
         return self + other
@@ -104,13 +108,4 @@ class Tensor:
 
 
 
-
-
-if __name__ == "__main__":
-    a = Tensor([1, 2, 3], shape=(3, 1))
-    b = Tensor([10], shape=(1,))
-    c = a + b
-    c.backward()
-    print("a.grad:", a.grad) 
-    print("b.grad:", b.grad)  
 
