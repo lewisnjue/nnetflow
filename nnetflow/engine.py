@@ -2,14 +2,15 @@ from typing import List, Tuple
 import numpy as np
 
 class Tensor:
-    def __init__(self, data: List[float] | np.ndarray, shape: Tuple = (1,), _children=(), _op=''):
-        if isinstance(data,np.ndarray): 
-            self.data = data 
-            self.shape = data.shape
+    def __init__(self, data: List[float] | np.ndarray, shape: Tuple = None, _children=(), _op=''):
+        if isinstance(data, np.ndarray):
+            self.data = data
         else:
-            self.data = np.array(data).reshape(shape)
-            self.shape = self.data.shape
+            self.data = np.array(data)
+        if shape is not None:
+            self.data = self.data.reshape(shape)
 
+        self.shape = self.data.shape
         self.grad = np.zeros_like(self.data)
         self._backward = lambda: None
         self._prev = set(_children)
@@ -24,6 +25,43 @@ class Tensor:
             if s_dim == 1 and g_dim != 1:
                 grad = grad.sum(axis=i, keepdims=True)
         return grad
+
+    def exp(self):
+        out_data = np.exp(self.data)
+        out = Tensor(out_data, _children=(self,), _op='exp')
+        def _backward():
+            # d/dx e^x = e^x
+            self.grad += out.grad * out.data
+        out._backward = _backward
+        return out
+
+    def log(self):
+        out_data = np.log(self.data)
+        out = Tensor(out_data, _children=(self,), _op='log')
+        def _backward():
+            # d/dx ln(x) = 1/x
+            self.grad += out.grad * (1 / self.data)
+        out._backward = _backward
+        return out
+    def abs(self):
+        out_data = np.abs(self.data)
+        out = Tensor(out_data, _children=(self,), _op='abs')
+        def _backward():
+            # d/dx |x| = sign(x)
+            self.grad += out.grad * np.sign(self.data)
+        out._backward = _backward
+        return out
+
+    def log1p(self):
+        out_data = np.log1p(self.data)
+        out = Tensor(out_data, _children=(self,), _op='log1p')
+        def _backward():
+            # d/dx log(1+x) = 1/(1+x)
+            self.grad += out.grad * (1.0 / (1.0 + self.data))
+        out._backward = _backward
+        return out
+
+
 
     def __add__(self, other):
         if isinstance(other,int):
@@ -56,6 +94,18 @@ class Tensor:
 
         return out
 
+    def __truediv__(self, other):
+        return self * (other**-1)
+
+    def __pow__(self, power):
+        assert isinstance(power, (int, float)), "only supports scalar powers"
+        out = Tensor(self.data ** power, _children=(self,), _op='pow')
+        def _backward():
+            self.grad += out.grad * (power * self.data ** (power - 1))
+        out._backward = _backward
+        return out
+
+    # activation functions 
     def relu(self):
         out_data = np.where(self.data < 0, 0, self.data)
         # also here 
@@ -66,6 +116,30 @@ class Tensor:
         out._backward = _backward
 
         return out
+    # -----------
+    def tanh(self):
+        out_data = np.tanh(self.data)
+        out = Tensor(out_data, _children=(self,), _op='tanh')
+        def _backward():
+            self.grad += out.grad * (1 - out.data**2)
+        out._backward = _backward
+        return out
+    # ------ 
+    def sigmoid(self):
+        """
+        Applies the sigmoid activation: sigmoid(x) = 1 / (1 + exp(-x)).
+        """
+        out_data = 1 / (1 + np.exp(-self.data))
+        out = Tensor(out_data, _children=(self,), _op='sigmoid')
+        def _backward():
+            # derivative: sigmoid(x) * (1 - sigmoid(x))
+            self.grad += out.grad * (out.data * (1 - out.data))
+        out._backward = _backward
+        return out
+
+
+
+
 
     def __matmul__(self, other):
         assert isinstance(other, Tensor), "unsupported operation"
@@ -84,6 +158,8 @@ class Tensor:
         return out
 
     def backward(self):
+        if self.data.size != 1:
+            raise RuntimeError("Backward can only be called on scalar outputs.")
         """
         this is building a topological sort
         """
