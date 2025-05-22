@@ -1,6 +1,50 @@
 import random
 import numpy as np
-from nnetflow.engine import Tensor 
+from nnetflow.engine import Tensor
+
+
+
+"""start here not impremented"""
+
+
+class Linear:
+    def __init__(self, in_features: int, out_features: int, bias=True, dtype=None):
+        self.in_features = in_features
+        self.out_features = out_features
+        self.dtype = dtype
+
+        weight = np.random.randn(out_features, in_features)
+
+        if dtype:
+            weight = weight.astype(dtype)
+        self.weight = Tensor(weight.T) 
+
+
+        if bias:
+            b = np.random.randn(out_features)
+            if dtype:
+                b = b.astype(dtype)
+            self.bias = Tensor(b)
+            del b
+        else:
+            self.bias = None
+        
+        del weight
+
+    def __call__(self,x:Tensor):
+        assert x.data.shape[-1] == self.in_features , "shape mismatch"
+
+        if self.bias:
+            return x @ self.weight + self.bias
+        else:
+            return x @ self.weight 
+            
+
+
+
+
+
+"""end here """
 
 class Module:
     def zero_grad(self):
