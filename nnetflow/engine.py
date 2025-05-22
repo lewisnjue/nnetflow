@@ -26,6 +26,17 @@ class Tensor:
                 grad = grad.sum(axis=i, keepdims=True)
         return grad
 
+    def sum(self):
+        out = Tensor(np.array(self.data.sum()), _children=(self,), _op='sum')
+
+        def _backward():
+            self.grad += np.ones_like(self.data) * out.grad
+
+        out._backward = _backward
+        return out
+
+
+
     def __add__(self, other):
         assert isinstance(other, (float, Tensor)), "unsupported operation"
         other = other if isinstance(other, Tensor) else Tensor([other])
