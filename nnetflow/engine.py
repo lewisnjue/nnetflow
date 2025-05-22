@@ -3,7 +3,11 @@ import numpy as np
 
 class Tensor:
     def __init__(self, data: List[float] | np.ndarray, shape: Tuple = (1,), _children=(), _op=''):
-        self.data = np.array(data).reshape(shape)
+        if isinstance(data,np.ndarray): 
+            self.data = data
+        else:
+            self.data = np.array(data)
+            self.data.reshape(shape)
         self.grad = np.zeros_like(self.data)
         self._backward = lambda: None
         self._prev = set(_children)
@@ -23,7 +27,7 @@ class Tensor:
         assert isinstance(other, (float, Tensor)), "unsupported operation"
         other = other if isinstance(other, Tensor) else Tensor([other])
         out_shape = np.broadcast_shapes(self.data.shape, other.data.shape)
-        out = Tensor((self.data + other.data).flatten().tolist(), shape=out_shape, _children=(self, other), _op='+')
+        out = Tensor(self.data + other.data, _children=(self, other), _op='+')
 
         def _backward():
             self.grad += Tensor._unbroadcast(out.grad, self.data.shape)
@@ -39,7 +43,7 @@ class Tensor:
         assert isinstance(other, (float, Tensor)), "unsupported operation"
         other = other if isinstance(other, Tensor) else Tensor([other])
         out_shape = np.broadcast_shapes(self.data.shape, other.data.shape)
-        out = Tensor((self.data * other.data).flatten().tolist(), shape=out_shape, _children=(self, other), _op='*')
+        out = Tensor(self.data * other.data, _children=(self, other), _op='*')
 
         def _backward():
             self.grad += Tensor._unbroadcast(other.data * out.grad, self.data.shape)
@@ -50,7 +54,7 @@ class Tensor:
 
     def relu(self):
         out_data = np.where(self.data < 0, 0, self.data)
-        out = Tensor(out_data.flatten().tolist(), shape=self.data.shape, _children=(self,), _op='ReLU')
+        out = Tensor(out_data, _children=(self,), _op='ReLU')
 
         def _backward():
             self.grad += (out.data > 0) * out.grad
@@ -60,10 +64,8 @@ class Tensor:
 
     def __matmul__(self, other):
         assert isinstance(other, Tensor), "unsupported operation"
-        assert self.data.shape[-1] == other.data.shape[0], "shape mismatch"
-
         result = self.data @ other.data
-        out = Tensor(result.flatten().tolist(), shape=result.shape, _children=(self, other), _op='@')
+        out = Tensor(result, _children=(self, other), _op='@')
 
         def _backward():
             self.grad += out.grad @ other.data.T
