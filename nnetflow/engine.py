@@ -2,11 +2,14 @@ from typing import List, Tuple
 import numpy as np
 
 class Tensor:
-    def __init__(self, data: List[float] | np.ndarray, shape: Tuple = (1,), _children=(), _op=''):
+    def __init__(self, data: List[float] | np.ndarray, shape: Tuple = (1,), _children=(), _op='',dtype=None):
         if isinstance(data,np.ndarray): 
             self.data = data
         else:
-            self.data = np.array(data)
+            if dtype:
+                self.data = np.array(data,dtype = dtype)
+            else:
+                self.data = np.array(data)
             self.data.reshape(shape)
         self.grad = np.zeros_like(self.data)
         self._backward = lambda: None
@@ -60,6 +63,36 @@ class Tensor:
             self.grad += (out.data > 0) * out.grad
         out._backward = _backward
 
+        return out
+
+
+    def __truediv__(self, other):
+        return self * (other**-1)
+
+
+    def __pow__(self, power):
+        assert isinstance(power, (int, float)), "only supports scalar powers"
+        out = Tensor(self.data ** power, _children=(self,), _op='pow')
+        def _backward():
+            self.grad += out.grad * (power * self.data ** (power - 1))
+        out._backward = _backward
+        return out
+
+    
+    def tanh(self):
+        out_data = np.tanh(self.data)
+        out = Tensor(out_data, _children=(self,), _op='tanh')
+        def _backward():
+            self.grad += out.grad * (1 - out.data**2)
+        out._backward = _backward
+        return out
+    
+    def sigmoid(self):
+        out_data = 1 / (1 + np.exp(-self.data))
+        out = Tensor(out_data, _children=(self,), _op='sigmoid')
+        def _backward():
+            self.grad += out.grad * (out.data * (1 - out.data))
+        out._backward = _backward
         return out
 
     def __matmul__(self, other):
