@@ -10,7 +10,7 @@ class Tensor:
                 self.data = np.array(data,dtype = dtype)
             else:
                 self.data = np.array(data)
-            self.data.reshape(shape)
+            self.data = self.data.reshape(shape)
         self.grad = np.zeros_like(self.data)
         self._backward = lambda: None
         self._prev = set(_children)
@@ -106,6 +106,8 @@ class Tensor:
         out._backward = _backward
 
         return out
+    def zero_grad(self):
+        self.grad = np.zeros_like(self.data) 
 
     def backward(self):
         topo = []
