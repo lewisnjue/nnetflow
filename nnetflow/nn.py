@@ -2,11 +2,6 @@ import random
 import numpy as np
 from nnetflow.engine import Tensor
 
-
-
-"""start here not impremented"""
-
-
 class Linear:
     def __init__(self, in_features: int, out_features: int, bias=True, dtype=None):
         self.in_features = in_features
@@ -14,121 +9,80 @@ class Linear:
         self.dtype = dtype
 
         weight = np.random.randn(out_features, in_features)
-
         if dtype:
             weight = weight.astype(dtype)
-        self.weight = Tensor(weight.T) 
-
+        # store as (in_features, out_features) for matmul compatibility
+        self.weight = Tensor(weight.T)
 
         if bias:
             b = np.random.randn(out_features)
             if dtype:
                 b = b.astype(dtype)
             self.bias = Tensor(b)
-            del b
         else:
             self.bias = None
-        
-        del weight
+        del weight, b
 
-    def __call__(self,x:Tensor):
-        assert x.data.shape[-1] == self.in_features , "shape mismatch"
-
+    def __call__(self, x: Tensor):
+        assert x.data.shape[-1] == self.in_features, "shape mismatch"
+        out = x @ self.weight
         if self.bias:
-            return x @ self.weight + self.bias
-        else:
-            return x @ self.weight 
-            
+            out = out + self.bias
+        return out
+
+# Numerically stable cross-entropy implemented with Tensor ops for proper autograd
+class CrossEntropyLoss:
+    def __init__(self, eps: float = 1e-12):
+        self.eps = eps
+
+    def __call__(self, input: Tensor, target: Tensor) -> Tensor:
+        # input: logits shape (batch, classes)
+        # shift for numerical stability
+        max_logits = Tensor(np.max(input.data, axis=-1, keepdims=True))
+        shifted = input - max_logits
+        exp_shifted = shifted.exp()
+        sum_exp = exp_shifted.sum(axis=-1, keepdims=True)
+        logsumexp = sum_exp.log()
+        # log-probs: shifted - logsumexp
+        log_probs = shifted - logsumexp
+        # negative log-likelihood
+        nll = -(target * log_probs).sum(axis=-1)
+        # mean over batch
+        return nll.sum() * (1.0 / input.data.shape[0])
+
+# Functional wrapper
+def cross_entropy(input: Tensor, target: Tensor) -> Tensor:
+    return CrossEntropyLoss()(input, target)
 
 
+def softmax(input: Tensor, dim: int) -> Tensor:
+    """Functional softmax: returns probabilities along specified dim"""
+    data = input.data
+    shifted = data - np.max(data, axis=dim, keepdims=True)
+    exp_data = np.exp(shifted)
+    exp_sum = exp_data.sum(axis=dim, keepdims=True)
+    probs = exp_data / exp_sum
+    return Tensor(probs)
+
+class Softmax:
+    def __init__(self, dim: int):
+        self.dim = dim
+
+    def __call__(self, input: Tensor) -> Tensor:
+        return softmax(input, self.dim)
 
 
+class BCELoss:
+    """Binary Cross Entropy Loss as a callable class"""
+    def __init__(self, eps: float = 1e-12):
+        self.eps = eps
 
-"""end here """
-
-class Module:
-    def zero_grad(self):
-        for p in self.parameters():
-            p.grad = np.zeros_like(p.grad)
-
-    def parameters(self):
-        return []
-
-class Neuron(Module):
-    def __init__(self, nin, nonlin=True):
-        self.w = [Tensor([random.uniform(-1, 1)]) for _ in range(nin)]
-        self.b = Tensor([0.0])  # Bias as Tensor with shape (1,)
-        self.nonlin = nonlin
-
-    def __call__(self, x):
-        assert len(x) == len(self.w), "Input size mismatch"
-        act = sum([wi * xi for wi, xi in zip(self.w, x)], self.b)
-        return act.relu() if self.nonlin else act
-
-    def parameters(self):
-        return self.w + [self.b]
-
-    def __repr__(self):
-        return f"{'ReLU' if self.nonlin else 'Linear'}Neuron({len(self.w)})"
-
-class Layer(Module):
-    def __init__(self, nin, nout, **kwargs):
-        self.neurons = [Neuron(nin, **kwargs) for _ in range(nout)]
-
-    def __call__(self, x):
-        out = [n(x) for n in self.neurons]
-        return out[0] if len(out) == 1 else out
-
-    def parameters(self):
-        return [p for n in self.neurons for p in n.parameters()]
-
-    def __repr__(self):
-        return f"Layer of [{', '.join(str(n) for n in self.neurons)}]"
-
-class MLP(Module):
-    def __init__(self, nin, nouts):
-        sz = [nin] + nouts
-        self.layers = [Layer(sz[i], sz[i+1], nonlin=(i != len(nouts)-1)) for i in range(len(nouts))]
-
-    def __call__(self, x):
-        for layer in self.layers:
-            x = layer(x)
-        return x
-
-    def parameters(self):
-        return [p for layer in self.layers for p in layer.parameters()]
-
-    def __repr__(self):
-        return f"MLP of [{', '.join(str(layer) for layer in self.layers)}]"
+    def __call__(self, input: Tensor, target: Tensor) -> Tensor:
+        data = np.clip(input.data, self.eps, 1 - self.eps)
+        bce = -(target.data * np.log(data) + (1 - target.data) * np.log(1 - data))
+        return Tensor(np.array(bce.mean()))
 
 
-# --------------------
-
-class MSELoss:
-    def __call__(self, pred, target):
-        # Mean Squared Error: (1/n) * sum((y_pred - y_true)^2)
-        assert isinstance(pred, list) and isinstance(target, list), "Inputs must be lists of Tensors"
-        assert len(pred) == len(target), "Mismatch in prediction and target length"
-        
-        losses = [(p - t) * (p - t) for p, t in zip(pred, target)]
-        return sum(losses, Tensor([0.0])) * Tensor([1.0 / len(losses)])
-
-
-class SGD:
-    def __init__(self, params, lr=0.01):
-        self.params = params
-        self.lr = lr
-
-    def step(self):
-        for p in self.params:
-            p.data -= self.lr * p.grad
-
-    def zero_grad(self):
-        for p in self.params:
-            p.grad = np.zeros_like(p.grad)
-
-
-# -----------
-
-
-
+def bce_loss(input: Tensor, target: Tensor) -> Tensor:
+    """Functional BCE loss"""
+    return BCELoss()(input, target)

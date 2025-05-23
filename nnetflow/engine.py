@@ -26,15 +26,28 @@ class Tensor:
                 grad = grad.sum(axis=i, keepdims=True)
         return grad
 
-    def sum(self):
-        out = Tensor(np.array(self.data.sum()), _children=(self,), _op='sum')
+    def sum(self, axis=None, keepdims=False):
+        """
+        Sum over axes, supports autograd with correct broadcasting.
+        """
+        out_data = self.data.sum(axis=axis, keepdims=keepdims)
+        out = Tensor(out_data, _children=(self,), _op='sum')
 
         def _backward():
-            self.grad += np.ones_like(self.data) * out.grad
+            grad = out.grad
+            if axis is None:
+                grad = np.ones_like(self.data) * grad
+            else:
+                axes = axis if isinstance(axis, (tuple, list)) else (axis,)
+                if not keepdims:
+                    for ax in sorted(axes):
+                        grad = np.expand_dims(grad, axis=ax)
+                grad = np.broadcast_to(grad, self.data.shape)
+
+            self.grad += grad
 
         out._backward = _backward
         return out
-
 
 
     def __add__(self, other):
@@ -49,6 +62,15 @@ class Tensor:
         out._backward = _backward
 
         return out
+
+    def log(self):
+        out = Tensor(np.log(self.data), _children=(self,), _op='log')
+        def _backward():
+            self.grad += out.grad / self.data
+
+        out._backward = _backward
+        return out
+
 
     def __mul__(self, other):
         # Allow int as well as float and Tensor
@@ -79,6 +101,16 @@ class Tensor:
 
     def __truediv__(self, other):
         return self * (other**-1)
+
+    def exp(self):
+        out = Tensor(np.exp(self.data), _children=(self,), _op='exp')
+
+        def _backward():
+            self.grad += out.data * out.grad
+
+        out._backward = _backward
+        return out
+
 
 
     def __pow__(self, power):
