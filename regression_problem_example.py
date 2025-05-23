@@ -1,42 +1,41 @@
 import numpy as np
-from sklearn.datasets import make_classification
+from sklearn.datasets import fetch_california_housing
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+
 from nnetflow.engine import Tensor
-from nnetflow.nn import Linear, Softmax, cross_entropy
+from nnetflow.nn import Linear, mse_loss
 from nnetflow.optim import SGD
 
 
-X, y = make_classification(
-    n_samples=1000,
-    n_features=20,
-    n_informative=15,
-    n_redundant=5,
-    n_classes=4,
-    random_state=42
-)
+X, y = fetch_california_housing(return_X_y=True)
+y = y.reshape(-1, 1)  
 
 
-num_classes = 4
-y_onehot = np.eye(num_classes)[y]
+scaler_X = StandardScaler()
+scaler_y = StandardScaler()
+X = scaler_X.fit_transform(X).astype(np.float32)
+y = scaler_y.fit_transform(y).astype(np.float32)
 
 
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y_onehot, test_size=0.2, random_state=42
-)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 
 lr = 0.01
-epochs = 200
-batch_size = 32
+epochs = 100
+batch_size = 64
 
 input_dim = X.shape[1]
-hidden_dim = 16
+hidden_dim = 32
+output_dim = 1
+
+
 model = [
     Linear(input_dim, hidden_dim),
-    Linear(hidden_dim, num_classes)
+    Linear(hidden_dim, output_dim)
 ]
 
-
+# Collect trainable parameters
 params = []
 for layer in model:
     params.append(layer.weight)
@@ -61,8 +60,8 @@ for epoch in range(1, epochs + 1):
         xb = X_train[i:i + batch_size]
         yb = y_train[i:i + batch_size]
 
-        logits = forward(xb)
-        loss = cross_entropy(logits, Tensor(yb))
+        preds = forward(xb)
+        loss = mse_loss(preds, Tensor(yb))
         total_loss += loss.data
 
         optimizer.zero_grad()
@@ -73,9 +72,7 @@ for epoch in range(1, epochs + 1):
     print(f"Epoch {epoch}/{epochs} - Loss: {avg_loss.item():.4f}")
 
 
-logits_test = forward(X_test)
-probs = Softmax(dim=-1)(logits_test).data
-preds = np.argmax(probs, axis=1)
-labels = np.argmax(y_test, axis=1)
-accuracy = np.mean(preds == labels)
-print(f"Test Accuracy: {accuracy * 100:.2f}%")
+preds_test = forward(X_test).data
+mse = np.mean((preds_test - y_test) ** 2)
+rmse = np.sqrt(mse)
+print(f"Test RMSE: {rmse:.4f}")
