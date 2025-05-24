@@ -37,7 +37,6 @@ class Tensor:
                         grad = np.expand_dims(grad, axis=ax)
                 grad = np.broadcast_to(grad, self.data.shape)
             self.grad += grad
-
         out._backward = _backward
         return out
 
@@ -49,7 +48,6 @@ class Tensor:
             self.grad += Tensor._unbroadcast(out.grad, self.data.shape)
             other.grad += Tensor._unbroadcast(out.grad, other.data.shape)
         out._backward = _backward
-
         return out
 
     def __mul__(self, other):
@@ -68,8 +66,16 @@ class Tensor:
         out = Tensor(self.data @ other.data, _children=(self, other), _op='@')
 
         def _backward():
-            self.grad += out.grad @ other.data.T
-            other.grad += self.data.T @ out.grad
+            self_grad = np.matmul(out.grad, np.swapaxes(other.data, -1, -2))
+            other_grad = np.matmul(np.swapaxes(self.data, -1, -2), out.grad)
+            if self.data.ndim < out.data.ndim:
+                sum_axes = tuple(range(out.data.ndim - self.data.ndim))
+                self_grad = self_grad.sum(axis=sum_axes)
+            if other.data.ndim < out.data.ndim:
+                sum_axes = tuple(range(out.data.ndim - other.data.ndim))
+                other_grad = other_grad.sum(axis=sum_axes)
+            self.grad += self_grad
+            other.grad += other_grad
         out._backward = _backward
         return out
 
@@ -132,6 +138,14 @@ class Tensor:
 
     def __truediv__(self, other):
         return self * (other ** -1)
+
+    def reshape(self, *shape):
+        out = Tensor(self.data.reshape(shape), _children=(self,), _op='reshape')
+
+        def _backward():
+            self.grad += out.grad.reshape(self.data.shape)
+        out._backward = _backward
+        return out
 
     def zero_grad(self):
         self.grad = np.zeros_like(self.data)

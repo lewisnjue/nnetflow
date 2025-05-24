@@ -1,11 +1,30 @@
-import random
 import numpy as np
-from nnetflow.engine import Tensor
+from .engine import Tensor
+from typing import List, Tuple, Optional, Union
+
+def im2col_2d(arr: np.ndarray, kernel_size: Tuple[int,int], stride: int) -> np.ndarray:
+    B, C, H, W = arr.shape
+    kH, kW = kernel_size
+    out_h = (H - kH) // stride + 1
+    out_w = (W - kW) // stride + 1
+    patches = np.zeros((B, C*kH*kW, out_h*out_w))
+    for b in range(B):
+        patch_idx = 0
+        for i in range(0, H - kH + 1, stride):
+            for j in range(0, W - kW + 1, stride):
+                patch = arr[b, :, i:i+kH, j:j+kW].reshape(C*kH*kW)
+                patches[b, :, patch_idx] = patch
+                patch_idx += 1
+    return patches
+
+def softmax(x: Tensor, dim: int = -1) -> Tensor:
+    exp_x = (x - x.max(dim=dim)).exp()
+    return exp_x / exp_x.sum(dim=dim)
 
 class Module:
     def __init__(self):
-        object.__setattr__(self, '_modules', {})
-        object.__setattr__(self, '_parameters', [])
+        self._modules = {}
+        self._parameters = []
 
     def __setattr__(self, name, value):
         if '_modules' not in self.__dict__:
@@ -15,13 +34,12 @@ class Module:
         if isinstance(value, Module):
             self.__dict__['_modules'][name] = value
         elif isinstance(value, (list, tuple)):
-            # Recursively register modules/parameters in lists/tuples
             for idx, v in enumerate(value):
                 if isinstance(v, Module):
                     self.__dict__['_modules'][f'{name}[{idx}]'] = v
                 elif hasattr(v, 'parameters') and callable(v.parameters):
                     self.__dict__['_parameters'].extend(v.parameters())
-        elif hasattr(value, 'parameters') and callable(value.parameters):
+        elif hasattr(value, 'parameters') and callable(v.parameters):
             self.__dict__['_parameters'].extend(value.parameters())
         object.__setattr__(self, name, value)
 
@@ -29,7 +47,6 @@ class Module:
         params = list(self.__dict__.get('_parameters', []))
         for module in self.__dict__.get('_modules', {}).values():
             params.extend(module.parameters())
-        # Also check for lists/tuples of parameters
         for v in self.__dict__.values():
             if isinstance(v, (list, tuple)):
                 for item in v:
@@ -45,43 +62,18 @@ class Module:
         return self.forward(*args, **kwargs)
 
     def forward(self, *args, **kwargs):
-        raise NotImplementedError("Module subclasses must implement forward()")
+        raise NotImplementedError
 
 class Linear(Module):
-    def __init__(self, in_features: int, out_features: int, bias=True, dtype=None, activation=None):
+    def __init__(self, in_features, out_features, bias=True, activation=None):
         super().__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.dtype = dtype
+        std = 1 / np.sqrt(in_features) if activation in ['tanh', None] else np.sqrt(2.0 / in_features)
+        w = np.random.randn(in_features, out_features) * std
+        self.weight = Tensor(w)
+        self.bias = Tensor(np.zeros(out_features)) if bias else None
         self.activation = activation
-        # Use PyTorch-like Kaiming (He) initialization for ReLU, Xavier for tanh
-        if activation == 'relu':
-            std = np.sqrt(2.0 / in_features)
-        elif activation == 'tanh':
-            std = np.sqrt(1.0 / in_features)
-        else:
-            std = np.sqrt(2.0 / (in_features + out_features))
-        weight = np.random.randn(out_features, in_features) * std
-        if dtype:
-            weight = weight.astype(dtype)
-        self.weight = Tensor(weight.T)
-        if bias:
-            b = np.zeros(out_features, dtype=dtype if dtype else float)
-            self.bias = Tensor(b)
-        else:
-            self.bias = None
 
-    def __call__(self, x: Tensor):
-        # Accept both 1D and 2D input, handle scalar edge case
-        shape = x.data.shape
-        if not shape or shape == ():
-            raise ValueError("Input tensor has no shape (scalar), expected at least 1D array.")
-        if len(shape) == 1:
-            if shape[0] != self.in_features:
-                raise ValueError(f"Shape mismatch: got {shape}, expected ({self.in_features},)")
-        else:
-            if shape[-1] != self.in_features:
-                raise ValueError(f"Shape mismatch: got {shape}, expected (..., {self.in_features})")
+    def __call__(self, x):
         out = x @ self.weight
         if self.bias is not None:
             out = out + self.bias
@@ -89,7 +81,127 @@ class Linear(Module):
             out = out.relu()
         elif self.activation == 'tanh':
             out = out.tanh()
+        elif self.activation == 'sigmoid':
+            out = out.sigmoid()
         return out
+
+    def parameters(self):
+        return [self.weight, self.bias] if self.bias is not None else [self.weight]
+
+class Conv2D(Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size, kernel_size)
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        std = np.sqrt(2.0 / (in_channels * kernel_size[0] * kernel_size[1]))
+        self.weight = Tensor(np.random.randn(out_channels, in_channels, *kernel_size) * std)
+        self.bias = Tensor(np.zeros(out_channels)) if bias else None
+
+    def __call__(self, x):
+        if self.padding > 0:
+            x_padded = Tensor(np.pad(x.data, ((0,0), (0,0), (self.padding, self.padding), (self.padding, self.padding)), mode='constant'), _children=(x,), _op='pad')
+            def _pad_backward():
+                x.grad += x_padded.grad[:, :, self.padding:-self.padding, self.padding:-self.padding]
+            x_padded._backward = _pad_backward
+        else:
+            x_padded = x
+
+        B, C, H, W = x_padded.data.shape
+        kH, kW = self.kernel_size
+        out_h = (H - kH) // self.stride + 1
+        out_w = (W - kW) // self.stride + 1
+
+        cols_data = im2col_2d(x_padded.data, self.kernel_size, self.stride)
+        cols = Tensor(cols_data.reshape(B, C * kH * kW, out_h * out_w), _children=(x_padded,), _op='im2col')
+        weight_reshaped = self.weight.reshape(1, self.out_channels, C * kH * kW)
+
+        out = weight_reshaped @ cols  # (B, out_channels, out_h*out_w)
+        out = out.reshape(B, self.out_channels, out_h, out_w)
+
+        if self.bias is not None:
+            # Reshape bias to (1, out_channels, 1, 1) for proper broadcasting
+            bias_reshaped = self.bias.reshape(1, self.out_channels, 1, 1)
+            out = out + bias_reshaped
+
+        return out
+
+    def parameters(self):
+        return [self.weight, self.bias] if self.bias is not None else [self.weight]
+
+        
+class MaxPool2D(Module):
+    def __init__(self, kernel_size: int, stride: Optional[int] = None):
+        super().__init__()
+        self.kernel_size = kernel_size
+        self.stride = stride if stride is not None else kernel_size
+
+    def __call__(self, x: Tensor) -> Tensor:
+        B, C, H, W = x.shape
+        k = self.kernel_size
+        s = self.stride
+        out_h = (H - k) // s + 1
+        out_w = (W - k) // s + 1
+        out = np.zeros((B, C, out_h, out_w))
+        indices = np.zeros((B, C, out_h, out_w), dtype=np.int64)
+        for b in range(B):
+            for c in range(C):
+                for i in range(out_h):
+                    for j in range(out_w):
+                        h_start = i * s
+                        h_end = h_start + k
+                        w_start = j * s
+                        w_end = w_start + k
+                        window = x.data[b, c, h_start:h_end, w_start:w_end]
+                        out[b, c, i, j] = np.max(window)
+                        indices[b, c, i, j] = np.argmax(window)
+        out_tensor = Tensor(out, _children=(x,), _op='maxpool2d')
+        def _backward():
+            x.grad += np.zeros_like(x.data)
+            for b in range(B):
+                for c in range(C):
+                    for i in range(out_h):
+                        for j in range(out_w):
+                            h_start = i * s
+                            w_start = j * s
+                            idx = indices[b, c, i, j]
+                            ih = idx // k
+                            iw = idx % k
+                            x.grad[b, c, h_start + ih, w_start + iw] += out_tensor.grad[b, c, i, j]
+        out_tensor._backward = _backward
+        return out_tensor
+
+class MLP(Module):
+    def __init__(self, nin, nouts, activation='relu', last_activation=None):
+        super().__init__()
+        self.layers = []
+        sz = [nin] + nouts
+        for i in range(len(nouts)):
+            act = activation if i < len(nouts) - 1 else last_activation
+            self.layers.append(Linear(sz[i], sz[i+1], activation=act))
+        self.last_activation = last_activation
+
+    def __call__(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        if self.last_activation == 'sigmoid':
+            x = x.sigmoid()
+        elif self.last_activation == 'softmax':
+            x = softmax(x, dim=-1)
+        return x
+
+    def parameters(self):
+        params = []
+        for layer in self.layers:
+            params.extend(layer.parameters())
+        return params
+
+
+
 
 class CrossEntropyLoss:
     def __init__(self, eps: float = 1e-12):
@@ -184,172 +296,3 @@ class RMSELoss:
 
 def rmse_loss(input: Tensor, target: Tensor) -> Tensor:
     return RMSELoss()(input, target)
-
-class MLP(Module):
-    def __init__(self, nin, nouts, activation='relu', last_activation=None):
-        super().__init__()
-        self.layers = []
-        sz = [nin] + nouts
-        for i in range(len(nouts)):
-            act = activation if i < len(nouts) - 1 else last_activation
-            self.layers.append(Linear(sz[i], sz[i+1], activation=act))
-        self.last_activation = last_activation
-
-    def __call__(self, x):
-        for i, layer in enumerate(self.layers):
-            x = layer(x)
-        # Apply last activation if specified
-        if self.last_activation == 'sigmoid':
-            x = x.sigmoid()
-        elif self.last_activation == 'softmax':
-            x = softmax(x, dim=-1)
-        return x
-
-    def parameters(self):
-        params = []
-        for layer in self.layers:
-            params.extend(layer.parameters())
-        return params
-
-def im2col_1d(x, kernel_size, stride):
-    # x: (batch, channels, width)
-    B, C, W = x.shape
-    out_w = (W - kernel_size) // stride + 1
-    shape = (B, C, kernel_size, out_w)
-    strides = (
-        x.strides[0],
-        x.strides[1],
-        x.strides[2],
-        x.strides[2] * stride,
-    )
-    return np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides)
-
-class Conv1D(Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True):
-        super().__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.kernel_size = kernel_size
-        self.stride = stride
-        self.padding = padding
-        std = np.sqrt(2.0 / (in_channels * kernel_size))
-        self.weight = Tensor(np.random.randn(out_channels, in_channels, kernel_size) * std)
-        self.bias = Tensor(np.zeros(out_channels)) if bias else None
-
-    def __call__(self, x):
-        # x: Tensor with shape (batch, in_channels, width)
-        x_data = x.data
-        if self.padding > 0:
-            x_data = np.pad(x_data, ((0,0), (0,0), (self.padding, self.padding)), mode='constant')
-        B, C, W = x_data.shape
-        cols = im2col_1d(x_data, self.kernel_size, self.stride)  # shape: (B, C, K, L)
-        cols = cols.reshape(B, -1, cols.shape[-1])               # (B, C*K, L)
-        weight_reshaped = self.weight.data.reshape(self.out_channels, -1)  # (out_ch, C*K)
-        out = np.matmul(weight_reshaped[None, :, :], cols)       # (B, out_ch, L)
-        if self.bias is not None:
-            out += self.bias.data[None, :, None]
-        return Tensor(out)
-
-def im2col_2d(x, kernel_size, stride):
-    # x: (batch, channels, height, width)
-    B, C, H, W = x.shape
-    kH, kW = kernel_size
-    out_h = (H - kH) // stride + 1
-    out_w = (W - kW) // stride + 1
-    shape = (B, C, kH, kW, out_h, out_w)
-    strides = (
-        x.strides[0],
-        x.strides[1],
-        x.strides[2],
-        x.strides[3],
-        x.strides[2] * stride,
-        x.strides[3] * stride,
-    )
-    return np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides)
-
-class Conv2D(Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True):
-        super().__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        if isinstance(kernel_size, int):
-            kernel_size = (kernel_size, kernel_size)
-        self.kernel_size = kernel_size
-        self.stride = stride
-        self.padding = padding
-        std = np.sqrt(2.0 / (in_channels * kernel_size[0] * kernel_size[1]))
-        self.weight = Tensor(np.random.randn(out_channels, in_channels, kernel_size[0], kernel_size[1]) * std)
-        self.bias = Tensor(np.zeros(out_channels)) if bias else None
-
-    def __call__(self, x):
-        # x: Tensor with shape (batch, in_channels, height, width)
-        x_data = x.data
-        if self.padding > 0:
-            x_data = np.pad(x_data, ((0,0), (0,0), (self.padding, self.padding), (self.padding, self.padding)), mode='constant')
-        B, C, H, W = x_data.shape
-        kH, kW = self.kernel_size
-        out_h = (H - kH) // self.stride + 1
-        out_w = (W - kW) // self.stride + 1
-        cols = im2col_2d(x_data, self.kernel_size, self.stride)  # (B, C, kH, kW, out_h, out_w)
-        cols = cols.reshape(B, -1, out_h * out_w)  # (B, C*kH*kW, out_h*out_w)
-        weight_reshaped = self.weight.data.reshape(self.out_channels, -1)  # (out_ch, C*kH*kW)
-        out = np.matmul(weight_reshaped[None, :, :], cols)  # (B, out_ch, out_h*out_w)
-        out = out.reshape(B, self.out_channels, out_h, out_w)  # (B, out_ch, out_h, out_w)
-        if self.bias is not None:
-            out += self.bias.data[None, :, None, None]
-        return Tensor(out)
-    def parameters(self):
-        params = [self.weight]
-        if self.bias is not None:
-            params.append(self.bias)
-        return params
-
-def im2col_pool2d(x, kernel_size, stride):
-    # x: (batch, channels, height, width)
-    B, C, H, W = x.shape
-    kH, kW = kernel_size
-    out_h = (H - kH) // stride + 1
-    out_w = (W - kW) // stride + 1
-    shape = (B, C, kH, kW, out_h, out_w)
-    strides = (
-        x.strides[0],
-        x.strides[1],
-        x.strides[2],
-        x.strides[3],
-        x.strides[2] * stride,
-        x.strides[3] * stride,
-    )
-    return np.lib.stride_tricks.as_strided(x, shape=shape, strides=strides)
-
-class MaxPool1D:
-    def __init__(self, kernel_size, stride=None):
-        self.kernel_size = kernel_size
-        self.stride = stride or kernel_size
-    def __call__(self, x):
-        # x: (batch, channels, width)
-        batch, ch, width = x.data.shape
-        out_width = (width - self.kernel_size) // self.stride + 1
-        out = np.zeros((batch, ch, out_width))
-        for b in range(batch):
-            for c in range(ch):
-                for i in range(out_width):
-                    out[b, c, i] = np.max(x.data[b, c, i*self.stride:i*self.stride+self.kernel_size])
-        return Tensor(out)
-
-class MaxPool2D:
-    def __init__(self, kernel_size, stride=None):
-        if isinstance(kernel_size, int):
-            kernel_size = (kernel_size, kernel_size)
-        self.kernel_size = kernel_size
-        self.stride = stride or kernel_size[0]
-    def __call__(self, x):
-        # x: (batch, channels, height, width)
-        x_data = x.data
-        kH, kW = self.kernel_size
-        B, C, H, W = x_data.shape
-        out_h = (H - kH) // self.stride + 1
-        out_w = (W - kW) // self.stride + 1
-        cols = im2col_pool2d(x_data, self.kernel_size, self.stride)  # (B, C, kH, kW, out_h, out_w)
-        cols = cols.reshape(B, C, kH * kW, out_h, out_w)
-        out = np.max(cols, axis=2)  # (B, C, out_h, out_w)
-        return Tensor(out)

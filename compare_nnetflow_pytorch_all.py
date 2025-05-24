@@ -6,7 +6,7 @@ from sklearn.datasets import make_regression, make_classification
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from nnetflow.engine import Tensor
-from nnetflow.nn import MLP, Linear, cross_entropy, mse_loss
+from nnetflow.nn import MLP, Linear, cross_entropy, mse_loss, Module, Conv2D, MaxPool2D
 from nnetflow.optim import SGD, Adam
 
 # --- 1. Regression Task ---
@@ -195,7 +195,7 @@ X_test = (X_test - 0.1307) / 0.3081
 X_train = X_train.reshape(-1, 1, 28, 28)
 X_test = X_test.reshape(-1, 1, 28, 28)
 
-from nnetflow.nn import Module, Conv2D, MaxPool2D
+
 class NFConvNet(Module):
     def __init__(self):
         super().__init__()
@@ -204,6 +204,7 @@ class NFConvNet(Module):
         self.conv2 = Conv2D(8, 16, 3, stride=1, padding=1)
         self.pool2 = MaxPool2D(2)
         self.fc = Linear(16*7*7, 10)
+
     def forward(self, x):
         x = self.conv1(x)
         x = x.relu()
@@ -215,6 +216,10 @@ class NFConvNet(Module):
             x = Tensor(x.data.reshape(x.data.shape[0], -1))
         x = self.fc(x)
         return x
+
+    def parameters(self):
+        return self.conv1.parameters() + self.conv2.parameters() + self.fc.parameters()
+
 nf_model = NFConvNet()
 nf_params = [p for p in nf_model.parameters() if hasattr(p, 'data')]
 nf_optimizer = Adam(nf_params, lr=0.001)
