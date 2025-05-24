@@ -1,83 +1,96 @@
 # Usage Guide
 
-nnetflow is designed for easy experimentation with neural networks and autodiff. Below are typical usage patterns for regression and classification problems.
+nnetflow is designed for easy experimentation with neural networks and autodiff. Below are typical usage patterns for regression and classification problems. and also for images using conv layers 
 
-## Regression Example
 
-```python
+```py
+
 import numpy as np
-from sklearn.datasets import fetch_california_housing
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from nnetflow.nn import Conv2D, MaxPool2D, Linear, MLP, CrossEntropyLoss, Module
 from nnetflow.engine import Tensor
-from nnetflow.nn import Linear, mse_loss
-from nnetflow.optim import SGD
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader
+import time
 
-# Load and preprocess data
-X, y = fetch_california_housing(return_X_y=True)
-y = y.reshape(-1, 1)
-scaler_X = StandardScaler()
-scaler_y = StandardScaler()
-X = scaler_X.fit_transform(X).astype(np.float32)
-y = scaler_y.fit_transform(y).astype(np.float32)
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# ----------- DataLoader -----------
+def numpy_dataloader(batch_size=32, train=True):
+    tf = transforms.Compose([
+        transforms.ToTensor(),  # (0,1)
+        transforms.Lambda(lambda x: x.numpy()),
+    ])
+    cifar = datasets.CIFAR10(root='./data', train=train, download=True, transform=tf)
+    loader = DataLoader(cifar, batch_size=batch_size, shuffle=True)
+    for imgs, labels in loader:
+        imgs = imgs.numpy()
+        labels = np.eye(10)[labels.numpy()]  # One-hot
+        yield Tensor(imgs), Tensor(labels)
 
-# Model and training setup
-model = [Linear(X.shape[1], 32), Linear(32, 1)]
-params = [layer.weight for layer in model] + [layer.bias for layer in model if layer.bias is not None]
-optimizer = SGD(params, lr=0.01)
+# ----------- Model Definition -----------
+class SimpleCNN(Module):
+    def __init__(self):
+        super().__init__()
+        self.conv1 = Conv2D(3, 8, kernel_size=3, stride=1, padding=1)
+        self.pool = MaxPool2D(kernel_size=2)
+        self.conv2 = Conv2D(8, 16, kernel_size=3, stride=1, padding=1)
+        self.fc1 = Linear(16 * 8 * 8, 64, activation='relu')
+        self.fc2 = Linear(64, 10)
 
-def forward(x_batch):
-    out = Tensor(x_batch, shape=x_batch.shape)
-    out = model[0](out).relu()
-    out = model[1](out)
-    return out
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.pool(x)
+        x = self.conv2(x)
+        x = self.pool(x)
+        B, C, H, W = x.data.shape
+        x = x.reshape(B, C * H * W)
+        x = self.fc1(x)
+        x = self.fc2(x)
+        return x
 
-# Training loop
-for epoch in range(1, 101):
-    ... # batching, forward, loss, backward, optimizer.step
+# ----------- Training Function -----------
+def train(model, epochs=5, lr=0.01, batch_size=32):
+    loss_fn = CrossEntropyLoss()
 
-# Evaluation
-preds_test = forward(X_test).data
-```
+    for epoch in range(epochs):
+        total_loss = 0.0
+        num_batches = 0
+        start = time.time()
 
-## Classification Example
+        for x, y in numpy_dataloader(batch_size=batch_size, train=True):
+            out = model(x)
+            loss = loss_fn(out, y)
 
-```python
-import numpy as np
-from sklearn.datasets import load_iris
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from nnetflow.engine import Tensor
-from nnetflow.nn import Linear, cross_entropy, softmax
-from nnetflow.optim import SGD
+            # Backward pass
+            for p in model.parameters():
+                p.grad = np.zeros_like(p.data)
+            loss.backward()
 
-# Load and preprocess data
-X, y = load_iris(return_X_y=True)
-y = y.reshape(-1, 1)
-scaler_X = StandardScaler()
-X = scaler_X.fit_transform(X).astype(np.float32)
-y = np.eye(3)[y.astype(int).reshape(-1)]  # One-hot encoding
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+            # SGD step
+            for p in model.parameters():
+                p.data -= lr * p.grad
 
-# Model and training setup
-model = [Linear(X.shape[1], 10), Linear(10, 3)]
-params = [layer.weight for layer in model] + [layer.bias for layer in model if layer.bias is not None]
-optimizer = SGD(params, lr=0.01)
+            total_loss += loss.data.item() if hasattr(loss.data, 'item') else loss.data
+            num_batches += 1
 
-def forward(x_batch):
-    out = Tensor(x_batch, shape=x_batch.shape)
-    out = model[0](out).relu()
-    out = model[1](out)
-    return out
+        print(f"[Epoch {epoch+1}] Loss: {total_loss/num_batches:.4f} Time: {time.time()-start:.2f}s")
 
-# Training loop
-for epoch in range(1, 101):
-    ... # batching, forward, loss, backward, optimizer.step
+# ----------- Accuracy Evaluation -----------
+def evaluate(model):
+    correct = 0
+    total = 0
+    for x, y in numpy_dataloader(train=False):
+        out = model(x)
+        preds = np.argmax(out.data, axis=-1)
+        labels = np.argmax(y.data, axis=-1)
+        correct += np.sum(preds == labels)
+        total += x.data.shape[0]
+    print(f"Accuracy: {(correct / total) * 100:.2f}%")
 
-# Evaluation
-preds_test = forward(X_test).data
-preds_test_class = np.argmax(preds_test, axis=1)
+# ----------- Run Training -----------
+if __name__ == "__main__":
+    model = SimpleCNN()
+    train(model, epochs=5, lr=0.01, batch_size=64)
+    evaluate(model)
+
 ```
 
 ## Tensor API
@@ -93,6 +106,7 @@ preds_test_class = np.argmax(preds_test, axis=1)
 ## Optimizers
 
 - `SGD(params, lr=0.01)`: Stochastic Gradient Descent.
+- `ADAM 
 
 ---
 See the [API Reference](api.md) for more details.
