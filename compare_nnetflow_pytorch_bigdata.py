@@ -4,7 +4,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from nnetflow.engine import Tensor
 from nnetflow.nn import MLP, mse_loss, bce_loss
-from nnetflow.optim import SGD
+from nnetflow.optim import SGD, Adam
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -21,7 +21,7 @@ def run_regression(n_samples=100000, n_features=20):
     # nnetflow
     nf_model = MLP(nin=n_features, nouts=[64, 32, 1], activation='relu')
     nf_params = nf_model.parameters()
-    nf_optimizer = SGD(nf_params, lr=0.01, momentum=0.9)
+    nf_optimizer = Adam(nf_params, lr=0.001)  # Use Adam
     batch_size = 256
     epochs = 10
     for epoch in range(1, epochs + 1):
@@ -57,7 +57,7 @@ def run_regression(n_samples=100000, n_features=20):
         def forward(self, x):
             return self.net(x)
     torch_model = TorchMLP(n_features, [64, 32, 1])
-    torch_optimizer = optim.SGD(torch_model.parameters(), lr=0.01, momentum=0.9)
+    torch_optimizer = optim.Adam(torch_model.parameters(), lr=0.001)
     loss_fn = nn.MSELoss()
     X_train_t = torch.tensor(X_train, dtype=torch.float32)
     y_train_t = torch.tensor(y_train, dtype=torch.float32)
@@ -96,7 +96,7 @@ def run_classification(n_samples=100000, n_features=20):
     # nnetflow
     nf_model = MLP(nin=n_features, nouts=[64, 32, 1], activation='relu', last_activation='sigmoid')
     nf_params = nf_model.parameters()
-    nf_optimizer = SGD(nf_params, lr=0.01, momentum=0.9)
+    nf_optimizer = Adam(nf_params, lr=0.001)  # Use Adam
     batch_size = 256
     epochs = 10
     for epoch in range(1, epochs + 1):
@@ -134,7 +134,7 @@ def run_classification(n_samples=100000, n_features=20):
         def forward(self, x):
             return self.net(x)
     torch_model = TorchMLP(n_features, [64, 32, 1])
-    torch_optimizer = optim.SGD(torch_model.parameters(), lr=0.01, momentum=0.9)
+    torch_optimizer = optim.Adam(torch_model.parameters(), lr=0.001)
     loss_fn = nn.BCELoss()
     X_train_t = torch.tensor(X_train, dtype=torch.float32)
     y_train_t = torch.tensor(y_train, dtype=torch.float32)

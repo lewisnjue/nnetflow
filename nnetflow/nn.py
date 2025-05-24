@@ -91,9 +91,19 @@ class BCELoss:
         self.eps = eps
 
     def __call__(self, input: Tensor, target: Tensor) -> Tensor:
+        # Ensure input is in (0,1) for log
         data = np.clip(input.data, self.eps, 1 - self.eps)
+        # dL/dx = (x - y) / (x * (1-x))
         bce = -(target.data * np.log(data) + (1 - target.data) * np.log(1 - data))
-        return Tensor(np.array(bce.mean()))
+        out = Tensor(np.array(bce.mean()), _children=(input, target), _op='bce')
+
+        def _backward():
+            # Gradient w.r.t. input: (input - target) / (input * (1-input) * N)
+            grad = (data - target.data) / (data * (1 - data) * target.data.size)
+            input.grad += grad.reshape(input.grad.shape)
+            # No grad for target (labels)
+        out._backward = _backward
+        return out
 
 def bce_loss(input: Tensor, target: Tensor) -> Tensor:
     return BCELoss()(input, target)
