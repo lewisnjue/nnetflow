@@ -1,20 +1,31 @@
 import numpy as np
 from .engine import Tensor
 from typing import List, Tuple, Optional, Union
+from numpy.lib.stride_tricks import as_strided
 
-def im2col_2d(arr: np.ndarray, kernel_size: Tuple[int,int], stride: int) -> np.ndarray:
+
+def im2col_2d(arr: np.ndarray,
+                      kernel_size: Tuple[int,int],
+                      stride: int) -> np.ndarray:
     B, C, H, W = arr.shape
     kH, kW = kernel_size
+
     out_h = (H - kH) // stride + 1
     out_w = (W - kW) // stride + 1
-    patches = np.zeros((B, C*kH*kW, out_h*out_w))
-    for b in range(B):
-        patch_idx = 0
-        for i in range(0, H - kH + 1, stride):
-            for j in range(0, W - kW + 1, stride):
-                patch = arr[b, :, i:i+kH, j:j+kW].reshape(C*kH*kW)
-                patches[b, :, patch_idx] = patch
-                patch_idx += 1
+
+  
+    new_shape = (B, out_h, out_w, C, kH, kW)
+    new_strides = (
+        arr.strides[0],           # batch
+        arr.strides[2] * stride,  # window row step
+        arr.strides[3] * stride,  # window col step
+        arr.strides[1],           # channel
+        arr.strides[2],           # kernel row
+        arr.strides[3],           # kernel col
+    )
+
+    windows = as_strided(arr, shape=new_shape, strides=new_strides)
+    patches = windows.reshape(B, out_h*out_w, C*kH*kW).transpose(0,2,1)
     return patches
 
 def softmax(x: Tensor, dim: int = -1) -> Tensor:
@@ -133,7 +144,7 @@ class Conv2D(Module):
     def parameters(self):
         return [self.weight, self.bias] if self.bias is not None else [self.weight]
 
-        
+
 class MaxPool2D(Module):
     def __init__(self, kernel_size: int, stride: Optional[int] = None):
         super().__init__()
@@ -141,39 +152,64 @@ class MaxPool2D(Module):
         self.stride = stride if stride is not None else kernel_size
 
     def __call__(self, x: Tensor) -> Tensor:
-        B, C, H, W = x.shape
+        B, C, H, W = x.data.shape
         k = self.kernel_size
         s = self.stride
+
         out_h = (H - k) // s + 1
         out_w = (W - k) // s + 1
-        out = np.zeros((B, C, out_h, out_w))
-        indices = np.zeros((B, C, out_h, out_w), dtype=np.int64)
-        for b in range(B):
-            for c in range(C):
-                for i in range(out_h):
-                    for j in range(out_w):
-                        h_start = i * s
-                        h_end = h_start + k
-                        w_start = j * s
-                        w_end = w_start + k
-                        window = x.data[b, c, h_start:h_end, w_start:w_end]
-                        out[b, c, i, j] = np.max(window)
-                        indices[b, c, i, j] = np.argmax(window)
-        out_tensor = Tensor(out, _children=(x,), _op='maxpool2d')
+
+        # Create sliding-window view
+        shape = (B, C, out_h, out_w, k, k)
+        strides = (
+            x.data.strides[0],           # batch step
+            x.data.strides[1],           # channel step
+            x.data.strides[2] * s,       # window row step
+            x.data.strides[3] * s,       # window col step
+            x.data.strides[2],           # within-window row
+            x.data.strides[3],           # within-window col
+        )
+        windows = as_strided(x.data, shape=shape, strides=strides)
+
+        out_data = windows.max(axis=(4, 5))
+        argmax = windows.reshape(B, C, out_h, out_w, k * k).argmax(axis=4)
+
+        out_tensor = Tensor(out_data, _children=(x,), _op='maxpool2d')
+        out_tensor._argmax = argmax
+        # Store kernel_size and stride for use in backward
+        out_tensor._k = k
+        out_tensor._s = s
+
         def _backward():
-            x.grad += np.zeros_like(x.data)
+            k = out_tensor._k
+            s = out_tensor._s
+            B, C, out_h, out_w = out_tensor.data.shape
+
+            # Ensure x.grad is initialized
+            if x.grad is None:
+                x.grad = np.zeros_like(x.data, dtype=out_tensor.grad.dtype)
+
+            # Compute the position of max within each window
+            argmax = out_tensor._argmax  # Shape: (B, C, out_h, out_w)
+            kh = argmax // k  # Row index within kernel
+            kw = argmax % k   # Column index within kernel
+
+            # Accumulate gradients for each batch and channel
             for b in range(B):
                 for c in range(C):
-                    for i in range(out_h):
-                        for j in range(out_w):
-                            h_start = i * s
-                            w_start = j * s
-                            idx = indices[b, c, i, j]
-                            ih = idx // k
-                            iw = idx % k
-                            x.grad[b, c, h_start + ih, w_start + iw] += out_tensor.grad[b, c, i, j]
+                    # Compute input indices where gradients should go
+                    input_rows = (np.arange(out_h)[:, None] * s + kh[b, c]).ravel()
+                    input_cols = (np.arange(out_w)[None, :] * s + kw[b, c]).ravel()
+                    # Accumulate gradients at those positions
+                    np.add.at(
+                        x.grad[b, c],
+                        (input_rows, input_cols),
+                        out_tensor.grad[b, c].ravel()
+                    )
+
         out_tensor._backward = _backward
         return out_tensor
+        
 
 class MLP(Module):
     def __init__(self, nin, nouts, activation='relu', last_activation=None):
@@ -208,7 +244,6 @@ class CrossEntropyLoss:
         self.eps = eps
 
     def __call__(self, input: Tensor, target: Tensor) -> Tensor:
-        # Numerically stable log-softmax
         max_logits = Tensor(np.max(input.data, axis=-1, keepdims=True))
         shifted = input - max_logits
         exp_shifted = shifted.exp()
@@ -216,7 +251,6 @@ class CrossEntropyLoss:
         logsumexp = sum_exp.log()
         log_probs = shifted - logsumexp
         nll = -(target * log_probs).sum(axis=-1)
-        # Fix for scalar input
         if nll.data.shape == ():
             loss = nll
         else:
@@ -224,15 +258,12 @@ class CrossEntropyLoss:
         out = Tensor(np.array(loss.data), _children=(input, target), _op='cross_entropy')
 
         def _backward():
-            # Gradient: softmax(input) - target
             exps = np.exp(input.data - np.max(input.data, axis=-1, keepdims=True))
             softmax = exps / np.sum(exps, axis=-1, keepdims=True)
             grad = (softmax - target.data).astype(np.float32)
             grad = np.broadcast_to(grad, input.grad.shape)
-            # Divide by batch size to match PyTorch's reduction (mean)
             batch_size = input.data.shape[0] if len(input.data.shape) > 0 else 1
             input.grad += grad / batch_size
-            # No grad for target
         out._backward = _backward
         return out
 
@@ -259,24 +290,19 @@ class BCELoss:
         self.eps = eps
 
     def __call__(self, input: Tensor, target: Tensor) -> Tensor:
-        # Ensure input is in (0,1) for log
         data = np.clip(input.data, self.eps, 1 - self.eps)
-        # dL/dx = (x - y) / (x * (1-x))
         bce = -(target.data * np.log(data) + (1 - target.data) * np.log(1 - data))
         out = Tensor(np.array(bce.mean()), _children=(input, target), _op='bce')
 
         def _backward():
-            # Gradient w.r.t. input: (input - target) / (input * (1-input) * N)
             grad = (data - target.data) / (data * (1 - data) * target.data.size)
             input.grad += grad.reshape(input.grad.shape)
-            # No grad for target (labels)
         out._backward = _backward
         return out
 
 def bce_loss(input: Tensor, target: Tensor) -> Tensor:
     return BCELoss()(input, target)
 
-# === Regression Losses ===
 
 class MSELoss:
     def __call__(self, input: Tensor, target: Tensor) -> Tensor:

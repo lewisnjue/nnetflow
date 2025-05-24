@@ -1,9 +1,3 @@
-# nnetflow
-
-A minimal neural network framework with autodiff, inspired by micrograd and pytorch.
-
-## Installation
-```bash
 import numpy as np
 from nnetflow.nn import Conv2D, MaxPool2D, Linear, MLP, CrossEntropyLoss, Module
 from nnetflow.engine import Tensor
@@ -89,10 +83,3 @@ if __name__ == "__main__":
     model = SimpleCNN()
     train(model, epochs=5, lr=0.01, batch_size=64)
     evaluate(model)
-
-```
-
-
-# ...
-
-See the docs/ folder for more details.

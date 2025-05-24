@@ -50,6 +50,24 @@ class Tensor:
         out._backward = _backward
         return out
 
+    def __matmul__(self, other):
+        assert isinstance(other, Tensor), "unsupported operation"
+        out = Tensor(self.data @ other.data, _children=(self, other), _op='@')
+
+        def _backward():
+            self_grad = np.matmul(out.grad, np.swapaxes(other.data, -1, -2))
+            other_grad = np.matmul(np.swapaxes(self.data, -1, -2), out.grad)
+            # Sum over broadcasted batch dimension for self
+            if self.data.shape[0] == 1 and out.data.shape[0] > 1:
+                self_grad = self_grad.sum(axis=0, keepdims=True)
+            # Sum over broadcasted batch dimension for other, if applicable
+            if other.data.shape[0] == 1 and out.data.shape[0] > 1:
+                other_grad = other_grad.sum(axis=0, keepdims=True)
+            self.grad += self_grad
+            other.grad += other_grad
+        out._backward = _backward
+        return out
+
     def __mul__(self, other):
         if isinstance(other, int): other = float(other)
         other = other if isinstance(other, Tensor) else Tensor([other])
@@ -58,24 +76,6 @@ class Tensor:
         def _backward():
             self.grad += Tensor._unbroadcast(other.data * out.grad, self.data.shape)
             other.grad += Tensor._unbroadcast(self.data * out.grad, other.data.shape)
-        out._backward = _backward
-        return out
-
-    def __matmul__(self, other):
-        assert isinstance(other, Tensor), "unsupported operation"
-        out = Tensor(self.data @ other.data, _children=(self, other), _op='@')
-
-        def _backward():
-            self_grad = np.matmul(out.grad, np.swapaxes(other.data, -1, -2))
-            other_grad = np.matmul(np.swapaxes(self.data, -1, -2), out.grad)
-            if self.data.ndim < out.data.ndim:
-                sum_axes = tuple(range(out.data.ndim - self.data.ndim))
-                self_grad = self_grad.sum(axis=sum_axes)
-            if other.data.ndim < out.data.ndim:
-                sum_axes = tuple(range(out.data.ndim - other.data.ndim))
-                other_grad = other_grad.sum(axis=sum_axes)
-            self.grad += self_grad
-            other.grad += other_grad
         out._backward = _backward
         return out
 
