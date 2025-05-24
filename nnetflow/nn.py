@@ -3,31 +3,53 @@ import numpy as np
 from nnetflow.engine import Tensor
 
 class Linear:
-    def __init__(self, in_features: int, out_features: int, bias=True, dtype=None):
+    def __init__(self, in_features: int, out_features: int, bias=True, dtype=None, activation=None):
         self.in_features = in_features
         self.out_features = out_features
         self.dtype = dtype
-
-        weight = np.random.randn(out_features, in_features)
+        self.activation = activation
+        # Use PyTorch-like Kaiming (He) initialization for ReLU, Xavier for tanh
+        if activation == 'relu':
+            std = np.sqrt(2.0 / in_features)
+        elif activation == 'tanh':
+            std = np.sqrt(1.0 / in_features)
+        else:
+            std = np.sqrt(2.0 / (in_features + out_features))
+        weight = np.random.randn(out_features, in_features) * std
         if dtype:
             weight = weight.astype(dtype)
         self.weight = Tensor(weight.T)
-
         if bias:
-            b = np.random.randn(out_features)
-            if dtype:
-                b = b.astype(dtype)
+            b = np.zeros(out_features, dtype=dtype if dtype else float)
             self.bias = Tensor(b)
         else:
             self.bias = None
-        del weight, b
 
     def __call__(self, x: Tensor):
-        assert x.data.shape[-1] == self.in_features, "shape mismatch"
+        # Accept both 1D and 2D input, handle scalar edge case
+        shape = x.data.shape
+        if not shape or shape == ():
+            raise ValueError("Input tensor has no shape (scalar), expected at least 1D array.")
+        if len(shape) == 1:
+            if shape[0] != self.in_features:
+                raise ValueError(f"Shape mismatch: got {shape}, expected ({self.in_features},)")
+        else:
+            if shape[-1] != self.in_features:
+                raise ValueError(f"Shape mismatch: got {shape}, expected (..., {self.in_features})")
         out = x @ self.weight
-        if self.bias:
+        if self.bias is not None:
             out = out + self.bias
+        if self.activation == 'relu':
+            out = out.relu()
+        elif self.activation == 'tanh':
+            out = out.tanh()
         return out
+
+    def parameters(self):
+        params = [self.weight]
+        if self.bias is not None:
+            params.append(self.bias)
+        return params
 
 class CrossEntropyLoss:
     def __init__(self, eps: float = 1e-12):
@@ -41,7 +63,10 @@ class CrossEntropyLoss:
         logsumexp = sum_exp.log()
         log_probs = shifted - logsumexp
         nll = -(target * log_probs).sum(axis=-1)
-        return nll.sum() * (1.0 / input.data.shape[0])
+        # Fix for scalar input
+        if nll.data.shape == ():
+            return nll
+        return nll.sum() * (1.0 / nll.data.shape[0])
 
 def cross_entropy(input: Tensor, target: Tensor) -> Tensor:
     return CrossEntropyLoss()(input, target)
@@ -93,3 +118,28 @@ class RMSELoss:
 
 def rmse_loss(input: Tensor, target: Tensor) -> Tensor:
     return RMSELoss()(input, target)
+
+class MLP:
+    def __init__(self, nin, nouts, activation='relu', last_activation=None):
+        self.layers = []
+        sz = [nin] + nouts
+        for i in range(len(nouts)):
+            act = activation if i < len(nouts) - 1 else last_activation
+            self.layers.append(Linear(sz[i], sz[i+1], activation=act))
+        self.last_activation = last_activation
+
+    def __call__(self, x):
+        for i, layer in enumerate(self.layers):
+            x = layer(x)
+        # Apply last activation if specified
+        if self.last_activation == 'sigmoid':
+            x = x.sigmoid()
+        elif self.last_activation == 'softmax':
+            x = softmax(x, dim=-1)
+        return x
+
+    def parameters(self):
+        params = []
+        for layer in self.layers:
+            params.extend(layer.parameters())
+        return params

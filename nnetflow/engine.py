@@ -136,7 +136,7 @@ class Tensor:
     def zero_grad(self):
         self.grad = np.zeros_like(self.data)
 
-    def backward(self, grad_clip=1.0):
+    def backward(self, grad_clip=None):
         topo = []
         visited = set()
 
@@ -154,7 +154,10 @@ class Tensor:
             v._backward()
             v.grad = np.nan_to_num(v.grad, nan=0.0, posinf=1e5, neginf=-1e5)
             if grad_clip is not None:
-                np.clip(v.grad, -grad_clip, grad_clip, out=v.grad)
+                if isinstance(v.grad, np.ndarray) and np.issubdtype(v.grad.dtype, np.floating):
+                    np.clip(v.grad, -grad_clip, grad_clip, out=v.grad)
+                elif isinstance(v.grad, float):
+                    v.grad = float(np.clip(v.grad, -grad_clip, grad_clip))
 
     def __neg__(self): return self * -1.0
     def __radd__(self, other): return self + other
