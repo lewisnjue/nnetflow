@@ -5,9 +5,11 @@ from numpy.lib.stride_tricks import as_strided
 from . import cuda
 
 
-def im2col_2d(arr: np.ndarray,
-                      kernel_size: Tuple[int,int],
-                      stride: int) -> np.ndarray:
+def im2col_2d(arr, kernel_size: Tuple[int,int], stride: int):
+    # Ensure arr is a numpy array for as_strided
+    import numpy as np
+    if hasattr(arr, 'get'):
+        arr = arr.get()  # Convert CuPy array to NumPy array for as_strided
     B, C, H, W = arr.shape
     kH, kW = kernel_size
 
