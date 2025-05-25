@@ -166,6 +166,8 @@ class Tensor:
 
         for v in reversed(topo):
             v._backward()
+            if np.isnan(v.grad).any():  # i dont want NaN to get away with it 
+                print(f"NaN in gradients of node with op: {v._op}")
             v.grad = np.nan_to_num(v.grad, nan=0.0, posinf=1e5, neginf=-1e5)
             if grad_clip is not None:
                 if isinstance(v.grad, np.ndarray) and np.issubdtype(v.grad.dtype, np.floating):
