@@ -5,6 +5,7 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 from nnetflow.optim import Adam
 import time
+from nnetflow import cuda
 
 # ----------- DataLoader -----------
 def numpy_dataloader(batch_size=32, train=True):
@@ -33,7 +34,7 @@ class SimpleCNN(Module):
         x = self.pool(x)
         x = self.conv2(x)
         x = self.pool(x)
-        B, C, H, W = x.data.shape
+        B, C, H, W = tuple(x.data.shape)
         x = x.reshape(B, C * H * W)
         x = self.fc1(x)
         x = self.fc2(x)
@@ -68,17 +69,19 @@ def evaluate(model):
     total = 0
     for x, y in numpy_dataloader(train=False):
         out = model(x)
-        out = softmax(out)  # convert logits to probabilities
+        out = softmax(out, dim=-1)  # convert logits to probabilities
         preds = np.argmax(out.data, axis=-1)
 
         labels = y.data.astype(int)  # targets are class indices
         correct += np.sum(preds == labels)
-        total += x.data.shape[0]
+        total += x.data.shape[0] if len(x.data.shape) > 0 else x.data.size
 
     print(f"Accuracy: {(correct / total) * 100:.2f}%")
 
 # ----------- Run Training -----------
 if __name__ == "__main__":
-    model = SimpleCNN()
+    device = 'cuda' if cuda.is_available() else 'cpu'
+    print(f"[nnetflow] Using device: {device.upper()}")
+    model = SimpleCNN().to(device)
     train(model, epochs=5, lr=0.01, batch_size=64)
     evaluate(model)

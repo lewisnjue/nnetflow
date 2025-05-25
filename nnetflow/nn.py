@@ -2,6 +2,7 @@ import numpy as np
 from .engine import Tensor
 from typing import List, Tuple, Optional, Union
 from numpy.lib.stride_tricks import as_strided
+from . import cuda
 
 
 def im2col_2d(arr: np.ndarray,
@@ -36,6 +37,32 @@ class Module:
     def __init__(self):
         self._modules = {}
         self._parameters = []
+        self.device = None
+
+    def to(self, device):
+        device = cuda.Device(device) if not isinstance(device, cuda.Device) else device
+        self.device = device
+        # Move all submodules
+        for module in self._modules.values():
+            module.to(device)
+        # Move all parameters
+        for idx, param in enumerate(self._parameters):
+            if hasattr(param, 'to'):
+                self._parameters[idx] = param.to(device)
+        # Move parameters in lists/tuples
+        for attr, value in self.__dict__.items():
+            if isinstance(value, (list, tuple)):
+                new_list = []
+                for item in value:
+                    if hasattr(item, 'to'):
+                        new_list.append(item.to(device))
+                    else:
+                        new_list.append(item)
+                if isinstance(value, list):
+                    setattr(self, attr, new_list)
+                else:
+                    setattr(self, attr, tuple(new_list))
+        return self
 
     def __setattr__(self, name, value):
         if '_modules' not in self.__dict__:
@@ -50,7 +77,7 @@ class Module:
                     self.__dict__['_modules'][f'{name}[{idx}]'] = v
                 elif hasattr(v, 'parameters') and callable(v.parameters):
                     self.__dict__['_parameters'].extend(v.parameters())
-        elif hasattr(value, 'parameters') and callable(v.parameters):
+        elif hasattr(value, 'parameters') and callable(value.parameters):
             self.__dict__['_parameters'].extend(value.parameters())
         object.__setattr__(self, name, value)
 
@@ -76,15 +103,18 @@ class Module:
         raise NotImplementedError
 
 class Linear(Module):
-    def __init__(self, in_features, out_features, bias=True, activation=None):
+    def __init__(self, in_features, out_features, bias=True, activation=None, device=None):
         super().__init__()
+        self.device = device or cuda.get_default_device()
         std = 1 / np.sqrt(in_features) if activation in ['tanh', None] else np.sqrt(2.0 / in_features)
         w = np.random.randn(in_features, out_features) * std
-        self.weight = Tensor(w)
-        self.bias = Tensor(np.zeros(out_features)) if bias else None
+        self.weight = Tensor(w, device=self.device)
+        self.bias = Tensor(np.zeros(out_features), device=self.device) if bias else None
         self.activation = activation
 
     def __call__(self, x):
+        if hasattr(x, 'device') and x.device != self.device:
+            x = x.to(self.device)
         out = x @ self.weight
         if self.bias is not None:
             out = out + self.bias
@@ -100,8 +130,9 @@ class Linear(Module):
         return [self.weight, self.bias] if self.bias is not None else [self.weight]
 
 class Conv2D(Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True, device=None):
         super().__init__()
+        self.device = device or cuda.get_default_device()
         self.in_channels = in_channels
         self.out_channels = out_channels
         if isinstance(kernel_size, int):
@@ -110,35 +141,33 @@ class Conv2D(Module):
         self.stride = stride
         self.padding = padding
         std = np.sqrt(2.0 / (in_channels * kernel_size[0] * kernel_size[1]))
-        self.weight = Tensor(np.random.randn(out_channels, in_channels, *kernel_size) * std)
-        self.bias = Tensor(np.zeros(out_channels)) if bias else None
+        self.weight = Tensor(np.random.randn(out_channels, in_channels, *kernel_size) * std, device=self.device)
+        self.bias = Tensor(np.zeros(out_channels), device=self.device) if bias else None
 
     def __call__(self, x):
+        if hasattr(x, 'device') and x.device != self.device:
+            x = x.to(self.device)
         if self.padding > 0:
-            x_padded = Tensor(np.pad(x.data, ((0,0), (0,0), (self.padding, self.padding), (self.padding, self.padding)), mode='constant'), _children=(x,), _op='pad')
+            xp = cuda.get_array_module(self.device)
+            pad_fn = getattr(xp, 'pad', np.pad)  # fallback to np.pad if not present
+            x_padded = Tensor(pad_fn(x.data, ((0,0), (0,0), (self.padding, self.padding), (self.padding, self.padding)), mode='constant'), _children=(x,), _op='pad', device=self.device)
             def _pad_backward():
                 x.grad += x_padded.grad[:, :, self.padding:-self.padding, self.padding:-self.padding]
             x_padded._backward = _pad_backward
         else:
             x_padded = x
-
-        B, C, H, W = x_padded.data.shape
+        B, C, H, W = tuple(x_padded.data.shape)
         kH, kW = self.kernel_size
         out_h = (H - kH) // self.stride + 1
         out_w = (W - kW) // self.stride + 1
-
         cols_data = im2col_2d(x_padded.data, self.kernel_size, self.stride)
-        cols = Tensor(cols_data.reshape(B, C * kH * kW, out_h * out_w), _children=(x_padded,), _op='im2col')
+        cols = Tensor(cols_data.reshape(B, C * kH * kW, out_h * out_w), _children=(x_padded,), _op='im2col', device=self.device)
         weight_reshaped = self.weight.reshape(1, self.out_channels, C * kH * kW)
-
         out = weight_reshaped @ cols  # (B, out_channels, out_h*out_w)
         out = out.reshape(B, self.out_channels, out_h, out_w)
-
         if self.bias is not None:
-            # Reshape bias to (1, out_channels, 1, 1) for proper broadcasting
             bias_reshaped = self.bias.reshape(1, self.out_channels, 1, 1)
             out = out + bias_reshaped
-
         return out
 
     def parameters(self):
@@ -146,16 +175,18 @@ class Conv2D(Module):
 
 
 class MaxPool2D(Module):
-    def __init__(self, kernel_size: int, stride: Optional[int] = None):
+    def __init__(self, kernel_size: int, stride: Optional[int] = None, device=None):
         super().__init__()
+        self.device = device or cuda.get_default_device()
         self.kernel_size = kernel_size
         self.stride = stride if stride is not None else kernel_size
 
     def __call__(self, x: Tensor) -> Tensor:
-        B, C, H, W = x.data.shape
+        if hasattr(x, 'device') and x.device != self.device:
+            x = x.to(self.device)
+        B, C, H, W = tuple(x.data.shape)
         k = self.kernel_size
         s = self.stride
-
         out_h = (H - k) // s + 1
         out_w = (W - k) // s + 1
 
