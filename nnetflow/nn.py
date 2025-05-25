@@ -191,55 +191,45 @@ class MaxPool2D(Module):
         s = self.stride
         out_h = (H - k) // s + 1
         out_w = (W - k) // s + 1
-
-        # Create sliding-window view
+        # Ensure x.data is a numpy array for as_strided
+        arr = x.data
+        if hasattr(arr, 'get'):
+            arr = arr.get()
         shape = (B, C, out_h, out_w, k, k)
         strides = (
-            x.data.strides[0],           # batch step
-            x.data.strides[1],           # channel step
-            x.data.strides[2] * s,       # window row step
-            x.data.strides[3] * s,       # window col step
-            x.data.strides[2],           # within-window row
-            x.data.strides[3],           # within-window col
+            arr.strides[0],           # batch step
+            arr.strides[1],           # channel step
+            arr.strides[2] * s,       # window row step
+            arr.strides[3] * s,       # window col step
+            arr.strides[2],           # within-window row
+            arr.strides[3],           # within-window col
         )
-        windows = as_strided(x.data, shape=shape, strides=strides)
-
+        windows = as_strided(arr, shape=shape, strides=strides)
         out_data = windows.max(axis=(4, 5))
         argmax = windows.reshape(B, C, out_h, out_w, k * k).argmax(axis=4)
-
-        out_tensor = Tensor(out_data, _children=(x,), _op='maxpool2d')
+        out_tensor = Tensor(out_data, _children=(x,), _op='maxpool2d', device=self.device)
         out_tensor._argmax = argmax
-        # Store kernel_size and stride for use in backward
         out_tensor._k = k
         out_tensor._s = s
-
         def _backward():
             k = out_tensor._k
             s = out_tensor._s
             B, C, out_h, out_w = out_tensor.data.shape
-
-            # Ensure x.grad is initialized
+            import numpy as np
             if x.grad is None:
                 x.grad = np.zeros_like(x.data, dtype=out_tensor.grad.dtype)
-
-            # Compute the position of max within each window
-            argmax = out_tensor._argmax  # Shape: (B, C, out_h, out_w)
-            kh = argmax // k  # Row index within kernel
-            kw = argmax % k   # Column index within kernel
-
-            # Accumulate gradients for each batch and channel
+            argmax = out_tensor._argmax
+            kh = argmax // k
+            kw = argmax % k
             for b in range(B):
                 for c in range(C):
-                    # Compute input indices where gradients should go
                     input_rows = (np.arange(out_h)[:, None] * s + kh[b, c]).ravel()
                     input_cols = (np.arange(out_w)[None, :] * s + kw[b, c]).ravel()
-                    # Accumulate gradients at those positions
                     np.add.at(
                         x.grad[b, c],
                         (input_rows, input_cols),
                         out_tensor.grad[b, c].ravel()
                     )
-
         out_tensor._backward = _backward
         return out_tensor
         
