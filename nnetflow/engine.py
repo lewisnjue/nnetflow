@@ -1,19 +1,16 @@
 from typing import List, Tuple
 import numpy as np
 from . import cuda
-
 class Tensor:
     def __init__(self, data, shape: Tuple = None, _children=(), _op='', dtype=None, device=None):
         self.device = device or cuda.get_default_device()
         xp = cuda.get_array_module(self.device)
-        # Always convert to array on the correct device
         if hasattr(xp, 'ndarray') and isinstance(data, xp.ndarray):
             arr = data
         elif hasattr(data, 'shape') and hasattr(data, 'dtype'):
             arr = cuda.as_device_array(data, self.device)
         else:
             arr = cuda.as_device_array(data, self.device)
-        # Only reshape if shape is provided and not None and not equal to arr.shape
         if shape is not None and shape != arr.shape:
             arr = arr.reshape(shape)
         self.data = arr
@@ -22,14 +19,12 @@ class Tensor:
         self._prev = set(_children)
         self._op = _op
         self.shape = self.data.shape
-
     def to(self, device):
         device = cuda.Device(device) if not isinstance(device, cuda.Device) else device
         if device == self.device:
             return self
         xp = cuda.get_array_module(device)
         if xp is not cuda.get_array_module(self.device):
-            # Transfer between CPU/GPU
             if device.type == 'cuda':
                 data = cuda.cp.asarray(self.data)
                 grad = cuda.cp.asarray(self.grad)
@@ -42,13 +37,11 @@ class Tensor:
         t = Tensor(data, shape=data.shape, _children=self._prev, _op=self._op, dtype=self.data.dtype, device=device)
         t.grad = grad
         return t
-
     @staticmethod
     def _unbroadcast(grad, shape, target_array):
         import numpy as np
         from . import cuda
         cp = getattr(cuda, 'cp', None)
-        # Ensure grad is the same type as target_array
         if cp is not None and hasattr(cp, 'ndarray'):
             is_target_cupy = isinstance(target_array, cp.ndarray)
             is_grad_cupy = isinstance(grad, cp.ndarray)
@@ -65,7 +58,6 @@ class Tensor:
             if s_dim == 1 and g_dim != 1:
                 grad = xp.sum(grad, axis=i, keepdims=True)
         return grad
-
     def sum(self, axis=None, keepdims=False):
         xp = cuda.get_array_module(self.device)
         out_data = xp.sum(self.data, axis=axis, keepdims=keepdims)
@@ -83,7 +75,6 @@ class Tensor:
             self.grad += Tensor._unbroadcast(grad, self.data.shape, self.grad)
         out._backward = _backward
         return out
-
     def __add__(self, other):
         xp = cuda.get_array_module(self.device)
         other = other if isinstance(other, Tensor) else Tensor([other], device=self.device)
@@ -93,10 +84,9 @@ class Tensor:
             other.grad += Tensor._unbroadcast(out.grad, other.data.shape, other.grad)
         out._backward = _backward
         return out
-
     def __matmul__(self, other):
         xp = cuda.get_array_module(self.device)
-        assert isinstance(other, Tensor), "unsupported operation"
+        assert isinstance(other, Tensor)
         out = Tensor(self.data @ other.data, _children=(self, other), _op='@', device=self.device)
         def _backward():
             self_grad = xp.matmul(out.grad, xp.swapaxes(other.data, -1, -2))
@@ -109,7 +99,6 @@ class Tensor:
             other.grad += Tensor._unbroadcast(other_grad, other.data.shape, other.grad)
         out._backward = _backward
         return out
-
     def __mul__(self, other):
         xp = cuda.get_array_module(self.device)
         if isinstance(other, int): other = float(other)
@@ -120,7 +109,6 @@ class Tensor:
             other.grad += Tensor._unbroadcast(self.data * out.grad, other.data.shape, other.grad)
         out._backward = _backward
         return out
-
     def relu(self):
         xp = cuda.get_array_module(self.device)
         out_data = xp.where(self.data < 0, 0, self.data)
@@ -129,7 +117,6 @@ class Tensor:
             self.grad += Tensor._unbroadcast((out.data > 0) * out.grad, self.data.shape, self.grad)
         out._backward = _backward
         return out
-
     def sigmoid(self):
         xp = cuda.get_array_module(self.device)
         clipped = xp.clip(self.data, -60, 60)
@@ -139,7 +126,6 @@ class Tensor:
             self.grad += Tensor._unbroadcast(out.grad * out.data * (1 - out.data), self.data.shape, self.grad)
         out._backward = _backward
         return out
-
     def exp(self):
         xp = cuda.get_array_module(self.device)
         clipped = xp.clip(self.data, -60, 60)
@@ -149,7 +135,6 @@ class Tensor:
             self.grad += out.data * out.grad
         out._backward = _backward
         return out
-
     def log(self, eps=1e-8):
         xp = cuda.get_array_module(self.device)
         safe_data = xp.clip(self.data, eps, None)
@@ -158,7 +143,6 @@ class Tensor:
             self.grad += out.grad / safe_data
         out._backward = _backward
         return out
-
     def tanh(self):
         xp = cuda.get_array_module(self.device)
         out_data = xp.tanh(self.data)
@@ -167,7 +151,6 @@ class Tensor:
             self.grad += Tensor._unbroadcast(out.grad * (1 - out.data**2), self.data.shape, self.grad)
         out._backward = _backward
         return out
-
     def __pow__(self, power):
         xp = cuda.get_array_module(self.device)
         assert isinstance(power, (int, float)), "only supports scalar powers"
@@ -177,27 +160,19 @@ class Tensor:
             self.grad += out.grad * (power * xp.power(self.data, power - 1))
         out._backward = _backward
         return out
-
     def __truediv__(self, other):
         return self * (other ** -1)
-
     def reshape(self, *shape):
         out = Tensor(self.data.reshape(shape), _children=(self,), _op='reshape', device=self.device)
         def _backward():
             self.grad += Tensor._unbroadcast(out.grad.reshape(self.data.shape), self.data.shape, self.grad)
         out._backward = _backward
         return out
-
     def zero_grad(self):
         xp = cuda.get_array_module(self.device) if hasattr(self, 'device') else np
         self.grad = xp.zeros_like(self.data)
-        # Explicitly break reference cycles to help GC
-        self._backward = lambda: None
-        self._prev = set()
-        # On CPU, force Python garbage collection to avoid memory bloat
         import gc
         gc.collect()
-
     def backward(self, grad_clip=None):
         topo = []
         visited = set()
@@ -219,13 +194,8 @@ class Tensor:
                     np.clip(v.grad, -grad_clip, grad_clip, out=v.grad)
                 elif isinstance(v.grad, float):
                     v.grad = float(np.clip(v.grad, -grad_clip, grad_clip))
-        # After backward, break reference cycles to help GC
-        self._backward = lambda: None
-        self._prev = set()
-        # On CPU, force Python garbage collection to avoid memory bloat
         import gc
         gc.collect()
-
     def __neg__(self): return self * -1.0
     def __radd__(self, other): return self + other
     def __sub__(self, other): return self + (-other)

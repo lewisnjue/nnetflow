@@ -1,9 +1,6 @@
 from .engine import Tensor as tensor 
 import numpy as np
 from . import cuda
-
-"""add optimizers here"""
-
 class SGD:
     def __init__(self, params, lr=0.01, momentum=0.0):
         self.params = params
@@ -28,7 +25,6 @@ class SGD:
     def zero_grad(self):
         for p in self.params:
             p.zero_grad()
-
 class Adam:
     def __init__(self, params, lr=0.001, betas=(0.9, 0.999), eps=1e-8):
         self.params = params

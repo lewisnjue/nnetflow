@@ -1,8 +1,3 @@
-# nnetflow/cuda.py
-"""
-CuPy-based GPU device management for nnetflow.
-Provides is_available(), device context, and device string API.
-"""
 try:
     import cupy as cp
     _cupy_available = True
@@ -39,7 +34,6 @@ def as_device_array(data, device):
     else:
         return np.asarray(data)
 
-# Global default device
 _default_device = Device('cuda' if _cupy_available else 'cpu')
 
 def get_default_device():

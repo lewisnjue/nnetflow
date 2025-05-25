@@ -8,8 +8,6 @@ from sklearn.preprocessing import StandardScaler
 from nnetflow.engine import Tensor
 from nnetflow.nn import MLP, Linear, cross_entropy, mse_loss, Module, Conv2D, MaxPool2D
 from nnetflow.optim import SGD, Adam
-
-# --- 1. Regression Task ---
 print("\n=== REGRESSION TASK ===")
 X, y = make_regression(n_samples=1000, n_features=10, noise=0.1)
 scaler_X = StandardScaler()
@@ -17,8 +15,6 @@ scaler_y = StandardScaler()
 X = scaler_X.fit_transform(X).astype(np.float32)
 y = scaler_y.fit_transform(y.reshape(-1, 1)).astype(np.float32)
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# nnetflow
 nf_model = MLP(nin=10, nouts=[32, 16, 1], activation='relu')
 nf_params = []
 for p in nf_model.parameters():
@@ -38,7 +34,6 @@ for epoch in range(1, 6):
         total_loss += loss.data
         nf_optimizer.zero_grad()
         loss.backward()
-        # Debug: print first param and grad before step
         if epoch == 1 and i == 0:
             if len(nf_params) == 0:
                 print('[nnetflow][DEBUG] No parameters found in model!')
@@ -55,8 +50,6 @@ for epoch in range(1, 6):
 nf_preds_test = nf_model(Tensor(X_test, shape=X_test.shape)).data
 nf_mse = np.mean((nf_preds_test - y_test) ** 2)
 print(f"[nnetflow] Test MSE: {nf_mse:.4f}")
-
-# PyTorch
 class TorchMLP(nn.Module):
     def __init__(self):
         super().__init__()
@@ -94,16 +87,12 @@ with torch.no_grad():
     torch_preds_test = torch_model(X_test_t).numpy()
 torch_mse = np.mean((torch_preds_test - y_test) ** 2)
 print(f"[PyTorch] Test MSE: {torch_mse:.4f}")
-
-# --- 2. Classification Task ---
 print("\n=== CLASSIFICATION TASK ===")
 X, y = make_classification(n_samples=1000, n_features=10, n_classes=2)
 scaler = StandardScaler()
 X = scaler.fit_transform(X).astype(np.float32)
 y = y.astype(np.int64)
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# nnetflow
 nf_model = MLP(nin=10, nouts=[32, 16, 2], activation='relu')
 nf_params = []
 for p in nf_model.parameters():
@@ -134,8 +123,6 @@ nf_logits_test = nf_model(Tensor(X_test, shape=X_test.shape))
 nf_preds = np.argmax(nf_logits_test.data, axis=1)
 nf_acc = (nf_preds == y_test).mean()
 print(f"[nnetflow] Test Accuracy: {nf_acc:.4f}")
-
-# PyTorch
 class TorchMLP2(nn.Module):
     def __init__(self):
         super().__init__()
@@ -174,8 +161,6 @@ with torch.no_grad():
     torch_preds = torch_logits_test.argmax(dim=1).numpy()
 torch_acc = (torch_preds == y_test).mean()
 print(f"[PyTorch] Test Accuracy: {torch_acc:.4f}")
-
-# --- 3. Image Classification Task (MNIST subset) ---
 print("\n=== IMAGE CLASSIFICATION TASK (MNIST) ===")
 from torchvision import datasets, transforms
 transform = transforms.Compose([
@@ -194,8 +179,6 @@ X_train = (X_train - 0.1307) / 0.3081
 X_test = (X_test - 0.1307) / 0.3081
 X_train = X_train.reshape(-1, 1, 28, 28)
 X_test = X_test.reshape(-1, 1, 28, 28)
-
-
 class NFConvNet(Module):
     def __init__(self):
         super().__init__()
@@ -204,7 +187,6 @@ class NFConvNet(Module):
         self.conv2 = Conv2D(8, 16, 3, stride=1, padding=1)
         self.pool2 = MaxPool2D(2)
         self.fc = Linear(16*7*7, 10)
-
     def forward(self, x):
         x = self.conv1(x)
         x = x.relu()
@@ -216,10 +198,8 @@ class NFConvNet(Module):
             x = Tensor(x.data.reshape(x.data.shape[0], -1))
         x = self.fc(x)
         return x
-
     def parameters(self):
         return self.conv1.parameters() + self.conv2.parameters() + self.fc.parameters()
-
 nf_model = NFConvNet()
 nf_params = [p for p in nf_model.parameters() if hasattr(p, 'data')]
 nf_optimizer = Adam(nf_params, lr=0.001)
@@ -248,8 +228,6 @@ nf_logits_test = nf_model(Tensor(X_test, shape=X_test.shape))
 nf_preds = np.argmax(nf_logits_test.data, axis=1)
 nf_acc = (nf_preds == y_test).mean()
 print(f"[nnetflow] Test Accuracy: {nf_acc:.4f}")
-
-# PyTorch
 class TorchConvNet(nn.Module):
     def __init__(self):
         super().__init__()

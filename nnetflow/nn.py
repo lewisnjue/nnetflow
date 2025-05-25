@@ -3,55 +3,42 @@ from .engine import Tensor
 from typing import List, Tuple, Optional, Union
 from numpy.lib.stride_tricks import as_strided
 from . import cuda
-
-
 def im2col_2d(arr, kernel_size: Tuple[int,int], stride: int):
-    # Ensure arr is a numpy array for as_strided
     import numpy as np
     if hasattr(arr, 'get'):
-        arr = arr.get()  # Convert CuPy array to NumPy array for as_strided
+        arr = arr.get()
     B, C, H, W = arr.shape
     kH, kW = kernel_size
-
     out_h = (H - kH) // stride + 1
     out_w = (W - kW) // stride + 1
-
-  
     new_shape = (B, out_h, out_w, C, kH, kW)
     new_strides = (
-        arr.strides[0],           # batch
-        arr.strides[2] * stride,  # window row step
-        arr.strides[3] * stride,  # window col step
-        arr.strides[1],           # channel
-        arr.strides[2],           # kernel row
-        arr.strides[3],           # kernel col
+        arr.strides[0],
+        arr.strides[2] * stride,
+        arr.strides[3] * stride,
+        arr.strides[1],
+        arr.strides[2],
+        arr.strides[3],
     )
-
     windows = as_strided(arr, shape=new_shape, strides=new_strides)
     patches = windows.reshape(B, out_h*out_w, C*kH*kW).transpose(0,2,1)
     return patches
-
 def softmax(x: Tensor, dim: int = -1) -> Tensor:
-    exp_x = (x - x.data.max(dim=dim)).exp() 
+    exp_x = (x - x.data.max(dim=dim)).exp()
     return exp_x / exp_x.sum(dim=dim)
-
 class Module:
     def __init__(self):
         self._modules = {}
         self._parameters = []
         self.device = None
-
     def to(self, device):
         device = cuda.Device(device) if not isinstance(device, cuda.Device) else device
         self.device = device
-        # Move all submodules
         for module in self._modules.values():
             module.to(device)
-        # Move all parameters
         for idx, param in enumerate(self._parameters):
             if hasattr(param, 'to'):
                 self._parameters[idx] = param.to(device)
-        # Move parameters in lists/tuples
         for attr, value in self.__dict__.items():
             if isinstance(value, (list, tuple)):
                 new_list = []
@@ -65,7 +52,6 @@ class Module:
                 else:
                     setattr(self, attr, tuple(new_list))
         return self
-
     def __setattr__(self, name, value):
         if '_modules' not in self.__dict__:
             object.__setattr__(self, '_modules', {})
@@ -82,7 +68,6 @@ class Module:
         elif hasattr(value, 'parameters') and callable(value.parameters):
             self.__dict__['_parameters'].extend(value.parameters())
         object.__setattr__(self, name, value)
-
     def parameters(self):
         params = list(self.__dict__.get('_parameters', []))
         for module in self.__dict__.get('_modules', {}).values():
@@ -97,13 +82,10 @@ class Module:
                         else:
                             params.append(p)
         return params
-
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
-
     def forward(self, *args, **kwargs):
         raise NotImplementedError
-
 class Linear(Module):
     def __init__(self, in_features, out_features, bias=True, activation=None, device=None):
         super().__init__()
@@ -113,7 +95,6 @@ class Linear(Module):
         self.weight = Tensor(w, device=self.device)
         self.bias = Tensor(np.zeros(out_features), device=self.device) if bias else None
         self.activation = activation
-
     def __call__(self, x):
         if hasattr(x, 'device') and x.device != self.device:
             x = x.to(self.device)
@@ -127,10 +108,8 @@ class Linear(Module):
         elif self.activation == 'sigmoid':
             out = out.sigmoid()
         return out
-
     def parameters(self):
         return [self.weight, self.bias] if self.bias is not None else [self.weight]
-
 class Conv2D(Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True, device=None):
         super().__init__()
@@ -145,7 +124,6 @@ class Conv2D(Module):
         std = np.sqrt(2.0 / (in_channels * kernel_size[0] * kernel_size[1]))
         self.weight = Tensor(np.random.randn(out_channels, in_channels, *kernel_size) * std, device=self.device)
         self.bias = Tensor(np.zeros(out_channels), device=self.device) if bias else None
-
     def __call__(self, x):
         if hasattr(x, 'device') and x.device != self.device:
             x = x.to(self.device)
@@ -171,18 +149,14 @@ class Conv2D(Module):
             bias_reshaped = self.bias.reshape(1, self.out_channels, 1, 1)
             out = out + bias_reshaped
         return out
-
     def parameters(self):
         return [self.weight, self.bias] if self.bias is not None else [self.weight]
-
-
 class MaxPool2D(Module):
     def __init__(self, kernel_size: int, stride: Optional[int] = None, device=None):
         super().__init__()
         self.device = device or cuda.get_default_device()
         self.kernel_size = kernel_size
         self.stride = stride if stride is not None else kernel_size
-
     def __call__(self, x: Tensor) -> Tensor:
         if hasattr(x, 'device') and x.device != self.device:
             x = x.to(self.device)
@@ -191,18 +165,17 @@ class MaxPool2D(Module):
         s = self.stride
         out_h = (H - k) // s + 1
         out_w = (W - k) // s + 1
-        # Ensure x.data is a numpy array for as_strided
         arr = x.data
         if hasattr(arr, 'get'):
             arr = arr.get()
         shape = (B, C, out_h, out_w, k, k)
         strides = (
-            arr.strides[0],           # batch step
-            arr.strides[1],           # channel step
-            arr.strides[2] * s,       # window row step
-            arr.strides[3] * s,       # window col step
-            arr.strides[2],           # within-window row
-            arr.strides[3],           # within-window col
+            arr.strides[0],
+            arr.strides[1],
+            arr.strides[2] * s,
+            arr.strides[3] * s,
+            arr.strides[2],
+            arr.strides[3],
         )
         windows = as_strided(arr, shape=shape, strides=strides)
         out_data = windows.max(axis=(4, 5))
@@ -218,14 +191,11 @@ class MaxPool2D(Module):
             import numpy as np
             if x.grad is None:
                 x.grad = np.zeros_like(x.data, dtype=out_tensor.grad.dtype)
-            # Ensure x.grad is a numpy array for np.add.at
             if hasattr(x.grad, 'get'):
                 x.grad = x.grad.get()
-            # Ensure out_tensor.grad is a numpy array for np.add.at
             grad_arr = out_tensor.grad
             if hasattr(grad_arr, 'get'):
                 grad_arr = grad_arr.get()
-            # Compute the position of max within each window
             argmax = out_tensor._argmax
             if hasattr(argmax, 'get'):
                 argmax = argmax.get()
@@ -242,8 +212,6 @@ class MaxPool2D(Module):
                     )
         out_tensor._backward = _backward
         return out_tensor
-        
-
 class MLP(Module):
     def __init__(self, nin, nouts, activation='relu', last_activation=None):
         super().__init__()
@@ -253,7 +221,6 @@ class MLP(Module):
             act = activation if i < len(nouts) - 1 else last_activation
             self.layers.append(Linear(sz[i], sz[i+1], activation=act))
         self.last_activation = last_activation
-
     def __call__(self, x):
         for layer in self.layers:
             x = layer(x)
@@ -262,49 +229,35 @@ class MLP(Module):
         elif self.last_activation == 'softmax':
             x = softmax(x, dim=-1)
         return x
-
     def parameters(self):
         params = []
         for layer in self.layers:
             params.extend(layer.parameters())
         return params
-
-
 class CrossEntropyLoss:
     def __init__(self, eps: float = 1e-12):
         self.eps = eps
-
     def __call__(self, input: Tensor, target: Tensor) -> Tensor:
-        # input: (B, C), raw logits
-        # target: (B,), class indices
         B = input.data.shape[0]
         shifted = input - Tensor(np.max(input.data, axis=1, keepdims=True))  # for numerical stability
         exp_shifted = shifted.exp()
         sum_exp = exp_shifted.sum(axis=1, keepdims=True)
         log_probs = shifted - sum_exp.log()
-
-        # Pick log-prob of correct class using advanced indexing
         idx = (np.arange(B), target.data.astype(np.int64))
         nll_data = -log_probs.data[idx]  # shape (B,)
-        # Ensure nll_data is a numpy array for Tensor constructor
         if hasattr(nll_data, 'get'):
             nll_data = nll_data.get()
         loss_data = nll_data.mean()
         out = Tensor(np.array(loss_data), _children=(input, target), _op='cross_entropy')
-
         def _backward():
             grad = np.exp(log_probs.data)
             grad[idx] -= 1  # subtract 1 at the true class
             grad /= B
             input.grad += grad
-
         out._backward = _backward
         return out
-
-
 def cross_entropy(input: Tensor, target: Tensor) -> Tensor:
     return CrossEntropyLoss()(input, target)
-
 def softmax(input: Tensor, dim: int) -> Tensor:
     data = input.data
     shifted = data - np.max(data, axis=dim, keepdims=True)
@@ -312,49 +265,37 @@ def softmax(input: Tensor, dim: int) -> Tensor:
     exp_sum = exp_data.sum(axis=dim, keepdims=True)
     probs = exp_data / exp_sum
     return Tensor(probs)
-
 class Softmax:
     def __init__(self, dim: int):
         self.dim = dim
-
     def __call__(self, input: Tensor) -> Tensor:
         return softmax(input, self.dim)
-
 class BCELoss:
-    """input to this should be sigmod output"""
     def __init__(self, eps: float = 1e-12):
         self.eps = eps
-
     def __call__(self, input: Tensor, target: Tensor) -> Tensor:
         data = np.clip(input.data, self.eps, 1 - self.eps)
         bce = -(target.data * np.log(data) + (1 - target.data) * np.log(1 - data))
         out = Tensor(np.array(bce.mean()), _children=(input, target), _op='bce')
-
         def _backward():
             grad = (data - target.data) / (data * (1 - data) * target.data.size)
             input.grad += grad.reshape(input.grad.shape)
         out._backward = _backward
         return out
-
 def bce_loss(input: Tensor, target: Tensor) -> Tensor:
     return BCELoss()(input, target)
-
-
 class MSELoss:
     def __call__(self, input: Tensor, target: Tensor) -> Tensor:
         diff = input - target
         mse = (diff * diff).sum() * (1.0 / input.data.size)
         return mse
-
 def mse_loss(input: Tensor, target: Tensor) -> Tensor:
     return MSELoss()(input, target)
-
 class RMSELoss:
     def __call__(self, input: Tensor, target: Tensor) -> Tensor:
         diff = input - target
         mse = (diff * diff).sum() * (1.0 / input.data.size)
         rmse = mse ** 0.5
         return rmse
-
 def rmse_loss(input: Tensor, target: Tensor) -> Tensor:
     return RMSELoss()(input, target)

@@ -7,19 +7,19 @@ from nnetflow.optim import Adam
 import time
 from nnetflow import cuda
 
-# ----------- DataLoader -----------
+
 def numpy_dataloader(batch_size=32, train=True):
     tf = transforms.Compose([
-        transforms.ToTensor(),  # (0,1)
+        transforms.ToTensor(),
         transforms.Lambda(lambda x: x.numpy()),
     ])
     cifar = datasets.CIFAR10(root='./data', train=train, download=True, transform=tf)
     loader = DataLoader(cifar, batch_size=batch_size, shuffle=True)
     for imgs, labels in loader:
         imgs = imgs.numpy()
-        yield Tensor(imgs), Tensor(labels.numpy().astype(int))  # ensure integer indices
+        yield Tensor(imgs), Tensor(labels.numpy().astype(int))
 
-# ----------- Model Definition -----------
+
 class SimpleCNN(Module):
     def __init__(self):
         super().__init__()
@@ -40,7 +40,7 @@ class SimpleCNN(Module):
         x = self.fc2(x)
         return x
 
-# ----------- Training Function -----------
+
 def train(model, epochs=5, lr=0.01, batch_size=32):
     loss_fn = CrossEntropyLoss()
     optimizer = Adam(model.parameters(), lr=lr)
@@ -63,22 +63,20 @@ def train(model, epochs=5, lr=0.01, batch_size=32):
 
         print(f"[Epoch {epoch+1}] Loss: {total_loss/num_batches:.4f} Time: {time.time()-start:.2f}s")
 
-# ----------- Accuracy Evaluation -----------
+
 def evaluate(model):
     correct = 0
     total = 0
     for x, y in numpy_dataloader(train=False):
         out = model(x)
-        out = softmax(out, dim=-1)  # convert logits to probabilities
+        out = softmax(out, dim=-1)
         preds = np.argmax(out.data, axis=-1)
-
-        labels = y.data.astype(int)  # targets are class indices
+        labels = y.data.astype(int)
         correct += np.sum(preds == labels)
         total += x.data.shape[0] if len(x.data.shape) > 0 else x.data.size
-
     print(f"Accuracy: {(correct / total) * 100:.2f}%")
 
-# ----------- Run Training -----------
+
 if __name__ == "__main__":
     device = 'cuda' if cuda.is_available() else 'cpu'
     print(f"[nnetflow] Using device: {device.upper()}")
