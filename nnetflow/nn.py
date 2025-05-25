@@ -218,7 +218,17 @@ class MaxPool2D(Module):
             import numpy as np
             if x.grad is None:
                 x.grad = np.zeros_like(x.data, dtype=out_tensor.grad.dtype)
+            # Ensure x.grad is a numpy array for np.add.at
+            if hasattr(x.grad, 'get'):
+                x.grad = x.grad.get()
+            # Ensure out_tensor.grad is a numpy array for np.add.at
+            grad_arr = out_tensor.grad
+            if hasattr(grad_arr, 'get'):
+                grad_arr = grad_arr.get()
+            # Compute the position of max within each window
             argmax = out_tensor._argmax
+            if hasattr(argmax, 'get'):
+                argmax = argmax.get()
             kh = argmax // k
             kw = argmax % k
             for b in range(B):
@@ -228,7 +238,7 @@ class MaxPool2D(Module):
                     np.add.at(
                         x.grad[b, c],
                         (input_rows, input_cols),
-                        out_tensor.grad[b, c].ravel()
+                        grad_arr[b, c].ravel()
                     )
         out_tensor._backward = _backward
         return out_tensor
