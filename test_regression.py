@@ -42,5 +42,15 @@ for epoch in range(1, epochs + 1):
 
 # Test
 preds_test = model(Tensor(X_test, shape=X_test.shape, device=device)).data
-mse = np.mean((preds_test - y_test) ** 2)
+# Ensure both preds_test and y_test are NumPy arrays for metric computation
+cp = getattr(cuda, 'cp', None)
+if cp is not None and isinstance(preds_test, cp.ndarray):
+    preds_test_np = cp.asnumpy(preds_test)
+else:
+    preds_test_np = preds_test
+if cp is not None and isinstance(y_test, cp.ndarray):
+    y_test_np = cp.asnumpy(y_test)
+else:
+    y_test_np = y_test
+mse = np.mean((preds_test_np - y_test_np) ** 2)
 print(f"Test MSE: {mse:.4f}")

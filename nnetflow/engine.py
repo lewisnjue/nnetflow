@@ -194,7 +194,9 @@ class Tensor:
         # Explicitly break reference cycles to help GC
         self._backward = lambda: None
         self._prev = set()
-        # Do NOT call xp.get_default_memory_pool().free_bytes() here; let CuPy manage its own pool
+        # On CPU, force Python garbage collection to avoid memory bloat
+        import gc
+        gc.collect()
 
     def backward(self, grad_clip=None):
         topo = []
@@ -220,7 +222,9 @@ class Tensor:
         # After backward, break reference cycles to help GC
         self._backward = lambda: None
         self._prev = set()
-        # Do NOT call xp.get_default_memory_pool().free_bytes() here; let CuPy manage its own pool
+        # On CPU, force Python garbage collection to avoid memory bloat
+        import gc
+        gc.collect()
 
     def __neg__(self): return self * -1.0
     def __radd__(self, other): return self + other
