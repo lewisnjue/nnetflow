@@ -45,7 +45,23 @@ class Tensor:
 
     @staticmethod
     def _unbroadcast(grad, shape):
-        xp = cuda.get_array_module('cuda' if hasattr(grad, 'device') and getattr(grad, 'device', None) == 'cuda' else 'cpu')
+        import numpy as np
+        from . import cuda
+        cp = getattr(cuda, 'cp', None)
+        # Determine if grad or shape is on GPU
+        grad_is_cupy = cp is not None and hasattr(cp, 'ndarray') and isinstance(grad, cp.ndarray)
+        shape_is_cupy = False
+        if hasattr(shape, '__len__') and len(shape) > 0:
+            for s in shape:
+                if cp is not None and hasattr(cp, 'ndarray') and isinstance(s, cp.ndarray):
+                    shape_is_cupy = True
+                    break
+        # Convert grad to match the type of shape (target tensor)
+        if grad_is_cupy and not shape_is_cupy:
+            grad = cp.asnumpy(grad)
+        elif not grad_is_cupy and shape_is_cupy:
+            grad = cp.asarray(grad)
+        xp = cp if (cp is not None and (grad_is_cupy or shape_is_cupy)) else np
         while len(grad.shape) > len(shape):
             grad = xp.sum(grad, axis=0)
         for i, (g_dim, s_dim) in enumerate(zip(grad.shape, shape)):
