@@ -276,6 +276,9 @@ class CrossEntropyLoss:
         # Pick log-prob of correct class using advanced indexing
         idx = (np.arange(B), target.data.astype(np.int64))
         nll_data = -log_probs.data[idx]  # shape (B,)
+        # Ensure nll_data is a numpy array for Tensor constructor
+        if hasattr(nll_data, 'get'):
+            nll_data = nll_data.get()
         loss_data = nll_data.mean()
         out = Tensor(np.array(loss_data), _children=(input, target), _op='cross_entropy')
 

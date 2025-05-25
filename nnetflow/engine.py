@@ -181,30 +181,22 @@ class Tensor:
         # Explicitly break reference cycles to help GC
         self._backward = lambda: None
         self._prev = set()
-        # If on GPU, try to free memory
-        if hasattr(xp, 'get_default_memory_pool'):
-            try:
-                xp.get_default_memory_pool().free_bytes()
-            except Exception:
-                pass
+        # Do NOT call xp.get_default_memory_pool().free_bytes() here; let CuPy manage its own pool
 
     def backward(self, grad_clip=None):
         topo = []
         visited = set()
-
         def build_topo(v):
             if v not in visited:
                 visited.add(v)
                 for child in v._prev:
                     build_topo(child)
                 topo.append(v)
-
         build_topo(self)
         self.grad = np.ones_like(self.data)
-
         for v in reversed(topo):
             v._backward()
-            if np.isnan(v.grad).any():  # i dont want NaN to get away with it 
+            if np.isnan(v.grad).any():
                 print(f"NaN in gradients of node with op: {v._op}")
             v.grad = np.nan_to_num(v.grad, nan=0.0, posinf=1e5, neginf=-1e5)
             if grad_clip is not None:
@@ -215,13 +207,7 @@ class Tensor:
         # After backward, break reference cycles to help GC
         self._backward = lambda: None
         self._prev = set()
-        # If on GPU, try to free memory
-        xp = cuda.get_array_module(self.device) if hasattr(self, 'device') else np
-        if hasattr(xp, 'get_default_memory_pool'):
-            try:
-                xp.get_default_memory_pool().free_bytes()
-            except Exception:
-                pass
+        # Do NOT call xp.get_default_memory_pool().free_bytes() here; let CuPy manage its own pool
 
     def __neg__(self): return self * -1.0
     def __radd__(self, other): return self + other
