@@ -1,8 +1,9 @@
 import numpy as np
-from nnetflow.nn import Conv2D, MaxPool2D, Linear, MLP, CrossEntropyLoss, Module
+from nnetflow.nn import Conv2D, MaxPool2D, Linear, MLP, CrossEntropyLoss, Module, softmax
 from nnetflow.engine import Tensor
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
+from nnetflow.optim import Adam
 import time
 
 # ----------- DataLoader -----------
@@ -15,8 +16,7 @@ def numpy_dataloader(batch_size=32, train=True):
     loader = DataLoader(cifar, batch_size=batch_size, shuffle=True)
     for imgs, labels in loader:
         imgs = imgs.numpy()
-        labels = np.eye(10)[labels.numpy()]  # One-hot
-        yield Tensor(imgs), Tensor(labels)
+        yield Tensor(imgs), Tensor(labels.numpy().astype(int))  # ensure integer indices
 
 # ----------- Model Definition -----------
 class SimpleCNN(Module):
@@ -42,6 +42,7 @@ class SimpleCNN(Module):
 # ----------- Training Function -----------
 def train(model, epochs=5, lr=0.01, batch_size=32):
     loss_fn = CrossEntropyLoss()
+    optimizer = Adam(model.parameters(), lr=lr)
 
     for epoch in range(epochs):
         total_loss = 0.0
@@ -52,14 +53,9 @@ def train(model, epochs=5, lr=0.01, batch_size=32):
             out = model(x)
             loss = loss_fn(out, y)
 
-            # Backward pass
-            for p in model.parameters():
-                p.grad = np.zeros_like(p.data)
+            optimizer.zero_grad()
             loss.backward()
-
-            # SGD step
-            for p in model.parameters():
-                p.data -= lr * p.grad
+            optimizer.step()
 
             total_loss += loss.data.item() if hasattr(loss.data, 'item') else loss.data
             num_batches += 1
@@ -72,10 +68,13 @@ def evaluate(model):
     total = 0
     for x, y in numpy_dataloader(train=False):
         out = model(x)
+        out = softmax(out)  # convert logits to probabilities
         preds = np.argmax(out.data, axis=-1)
-        labels = np.argmax(y.data, axis=-1)
+
+        labels = y.data.astype(int)  # targets are class indices
         correct += np.sum(preds == labels)
         total += x.data.shape[0]
+
     print(f"Accuracy: {(correct / total) * 100:.2f}%")
 
 # ----------- Run Training -----------

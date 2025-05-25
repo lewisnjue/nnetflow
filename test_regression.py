@@ -4,7 +4,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from nnetflow.engine import Tensor
 from nnetflow.nn import MLP, mse_loss
-from nnetflow.optim import SGD
+from nnetflow.optim import SGD,Adam
 
 # Generate regression data
 X, y = make_regression(n_samples=20000, n_features=10, noise=0.1)
@@ -17,7 +17,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_
 # Model: 2 hidden layers, ReLU, no output activation
 model = MLP(nin=10, nouts=[32, 16, 1], activation='relu')
 params = model.parameters()
-optimizer = SGD(params, lr=0.01, momentum=0.9)
+optimizer = Adam(params, lr=0.01)
 
 batch_size = 1024
 epochs = 50

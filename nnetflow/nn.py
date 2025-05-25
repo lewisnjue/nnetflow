@@ -29,7 +29,7 @@ def im2col_2d(arr: np.ndarray,
     return patches
 
 def softmax(x: Tensor, dim: int = -1) -> Tensor:
-    exp_x = (x - x.max(dim=dim)).exp()
+    exp_x = (x - x.data.max(dim=dim)).exp() 
     return exp_x / exp_x.sum(dim=dim)
 
 class Module:
@@ -237,35 +237,34 @@ class MLP(Module):
         return params
 
 
-
-
 class CrossEntropyLoss:
     def __init__(self, eps: float = 1e-12):
         self.eps = eps
 
     def __call__(self, input: Tensor, target: Tensor) -> Tensor:
-        max_logits = Tensor(np.max(input.data, axis=-1, keepdims=True))
-        shifted = input - max_logits
+        # input: (B, C), raw logits
+        # target: (B,), class indices
+        B = input.data.shape[0]
+        shifted = input - Tensor(np.max(input.data, axis=1, keepdims=True))  # for numerical stability
         exp_shifted = shifted.exp()
-        sum_exp = exp_shifted.sum(axis=-1, keepdims=True)
-        logsumexp = sum_exp.log()
-        log_probs = shifted - logsumexp
-        nll = -(target * log_probs).sum(axis=-1)
-        if nll.data.shape == ():
-            loss = nll
-        else:
-            loss = nll.sum() * (1.0 / nll.data.shape[0])
-        out = Tensor(np.array(loss.data), _children=(input, target), _op='cross_entropy')
+        sum_exp = exp_shifted.sum(axis=1, keepdims=True)
+        log_probs = shifted - sum_exp.log()
+
+        # Pick log-prob of correct class using advanced indexing
+        idx = (np.arange(B), target.data.astype(np.int64))
+        nll_data = -log_probs.data[idx]  # shape (B,)
+        loss_data = nll_data.mean()
+        out = Tensor(np.array(loss_data), _children=(input, target), _op='cross_entropy')
 
         def _backward():
-            exps = np.exp(input.data - np.max(input.data, axis=-1, keepdims=True))
-            softmax = exps / np.sum(exps, axis=-1, keepdims=True)
-            grad = (softmax - target.data).astype(np.float32)
-            grad = np.broadcast_to(grad, input.grad.shape)
-            batch_size = input.data.shape[0] if len(input.data.shape) > 0 else 1
-            input.grad += grad / batch_size
+            grad = np.exp(log_probs.data)
+            grad[idx] -= 1  # subtract 1 at the true class
+            grad /= B
+            input.grad += grad
+
         out._backward = _backward
         return out
+
 
 def cross_entropy(input: Tensor, target: Tensor) -> Tensor:
     return CrossEntropyLoss()(input, target)
@@ -286,6 +285,7 @@ class Softmax:
         return softmax(input, self.dim)
 
 class BCELoss:
+    """input to this should be sigmod output"""
     def __init__(self, eps: float = 1e-12):
         self.eps = eps
 
