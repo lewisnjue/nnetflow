@@ -44,24 +44,21 @@ class Tensor:
         return t
 
     @staticmethod
-    def _unbroadcast(grad, shape):
+    def _unbroadcast(grad, shape, target_array):
         import numpy as np
         from . import cuda
         cp = getattr(cuda, 'cp', None)
-        # Determine if grad or shape is on GPU
-        grad_is_cupy = cp is not None and hasattr(cp, 'ndarray') and isinstance(grad, cp.ndarray)
-        shape_is_cupy = False
-        if hasattr(shape, '__len__') and len(shape) > 0:
-            for s in shape:
-                if cp is not None and hasattr(cp, 'ndarray') and isinstance(s, cp.ndarray):
-                    shape_is_cupy = True
-                    break
-        # Convert grad to match the type of shape (target tensor)
-        if grad_is_cupy and not shape_is_cupy:
-            grad = cp.asnumpy(grad)
-        elif not grad_is_cupy and shape_is_cupy:
-            grad = cp.asarray(grad)
-        xp = cp if (cp is not None and (grad_is_cupy or shape_is_cupy)) else np
+        # Ensure grad is the same type as target_array
+        if cp is not None and hasattr(cp, 'ndarray'):
+            is_target_cupy = isinstance(target_array, cp.ndarray)
+            is_grad_cupy = isinstance(grad, cp.ndarray)
+            if is_target_cupy and not is_grad_cupy:
+                grad = cp.asarray(grad)
+            elif not is_target_cupy and is_grad_cupy:
+                grad = cp.asnumpy(grad)
+            xp = cp if is_target_cupy else np
+        else:
+            xp = np
         while len(grad.shape) > len(shape):
             grad = xp.sum(grad, axis=0)
         for i, (g_dim, s_dim) in enumerate(zip(grad.shape, shape)):
@@ -83,7 +80,7 @@ class Tensor:
                     for ax in sorted(axes):
                         grad = xp.expand_dims(grad, axis=ax)
                 grad = xp.broadcast_to(grad, self.data.shape)
-            self.grad += grad
+            self.grad += Tensor._unbroadcast(grad, self.data.shape, self.grad)
         out._backward = _backward
         return out
 
@@ -92,8 +89,8 @@ class Tensor:
         other = other if isinstance(other, Tensor) else Tensor([other], device=self.device)
         out = Tensor(self.data + other.data, _children=(self, other), _op='+', device=self.device)
         def _backward():
-            self.grad += Tensor._unbroadcast(out.grad, self.data.shape)
-            other.grad += Tensor._unbroadcast(out.grad, other.data.shape)
+            self.grad += Tensor._unbroadcast(out.grad, self.data.shape, self.grad)
+            other.grad += Tensor._unbroadcast(out.grad, other.data.shape, other.grad)
         out._backward = _backward
         return out
 
@@ -108,8 +105,8 @@ class Tensor:
                 self_grad = xp.sum(self_grad, axis=0, keepdims=True)
             if len(other.data.shape) > 0 and other.data.shape[0] == 1 and out.data.shape[0] > 1:
                 other_grad = xp.sum(other_grad, axis=0, keepdims=True)
-            self.grad += self_grad
-            other.grad += other_grad
+            self.grad += Tensor._unbroadcast(self_grad, self.data.shape, self.grad)
+            other.grad += Tensor._unbroadcast(other_grad, other.data.shape, other.grad)
         out._backward = _backward
         return out
 
@@ -119,8 +116,8 @@ class Tensor:
         other = other if isinstance(other, Tensor) else Tensor([other], device=self.device)
         out = Tensor(self.data * other.data, _children=(self, other), _op='*', device=self.device)
         def _backward():
-            self.grad += Tensor._unbroadcast(other.data * out.grad, self.data.shape)
-            other.grad += Tensor._unbroadcast(self.data * out.grad, other.data.shape)
+            self.grad += Tensor._unbroadcast(other.data * out.grad, self.data.shape, self.grad)
+            other.grad += Tensor._unbroadcast(self.data * out.grad, other.data.shape, other.grad)
         out._backward = _backward
         return out
 
@@ -129,7 +126,7 @@ class Tensor:
         out_data = xp.where(self.data < 0, 0, self.data)
         out = Tensor(out_data, _children=(self,), _op='ReLU', device=self.device)
         def _backward():
-            self.grad += (out.data > 0) * out.grad
+            self.grad += Tensor._unbroadcast((out.data > 0) * out.grad, self.data.shape, self.grad)
         out._backward = _backward
         return out
 
@@ -139,7 +136,7 @@ class Tensor:
         out_data = 1 / (1 + xp.exp(-clipped))
         out = Tensor(out_data, _children=(self,), _op='sigmoid', device=self.device)
         def _backward():
-            self.grad += out.grad * out.data * (1 - out.data)
+            self.grad += Tensor._unbroadcast(out.grad * out.data * (1 - out.data), self.data.shape, self.grad)
         out._backward = _backward
         return out
 
@@ -167,7 +164,7 @@ class Tensor:
         out_data = xp.tanh(self.data)
         out = Tensor(out_data, _children=(self,), _op='tanh', device=self.device)
         def _backward():
-            self.grad += out.grad * (1 - out.data**2)
+            self.grad += Tensor._unbroadcast(out.grad * (1 - out.data**2), self.data.shape, self.grad)
         out._backward = _backward
         return out
 
@@ -187,7 +184,7 @@ class Tensor:
     def reshape(self, *shape):
         out = Tensor(self.data.reshape(shape), _children=(self,), _op='reshape', device=self.device)
         def _backward():
-            self.grad += out.grad.reshape(self.data.shape)
+            self.grad += Tensor._unbroadcast(out.grad.reshape(self.data.shape), self.data.shape, self.grad)
         out._backward = _backward
         return out
 
