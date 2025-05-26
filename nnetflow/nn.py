@@ -99,6 +99,96 @@ class Linear(Module):
     def parameters(self):
         return [self.weight, self.bias] if self.bias is not None else [self.weight]
 
+
+class RNN(Module):
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        nonlinearity: str = 'tanh',
+        bias: bool = True,
+        batch_first: bool = False,
+    ):
+        super().__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.nonlinearity = nonlinearity
+        self.use_bias = bias
+        self.batch_first = batch_first
+
+        # Weight initialization
+        std = 1.0 / np.sqrt(hidden_size)
+        self.weight_ih = Tensor(np.random.randn(input_size, hidden_size) * std)
+        self.weight_hh = Tensor(np.random.randn(hidden_size, hidden_size) * std)
+        self.bias_ih = Tensor(np.zeros(hidden_size)) if bias else None
+        self.bias_hh = Tensor(np.zeros(hidden_size)) if bias else None
+
+    def forward(
+        self,
+        x: Tensor,
+        hx: Optional[Tensor] = None
+    ) -> Tuple[Tensor, Tensor]:
+        """
+        x: Tensor of shape (seq_len, batch, input_size) or (batch, seq_len, input_size) if batch_first=True
+        hx: Optional Tensor of shape (batch, hidden_size)
+        returns: (output, h_n)
+          - output: Tensor of shape (seq_len, batch, hidden_size)
+          - h_n: Tensor of shape (batch, hidden_size)
+        """
+        data = x.data
+        # if batch_first, convert to (seq_len, batch, input_size)
+        if self.batch_first:
+            data = data.transpose(1, 0, 2)
+
+        seq_len, batch_size, _ = data.shape
+        # initialize hidden state
+        if hx is None:
+            h_t = Tensor(np.zeros((batch_size, self.hidden_size)))
+        else:
+            h_t = hx
+
+        outputs = []
+        for t in range(seq_len):
+            # get time-step tensor
+            x_t = Tensor(data[t], _children=(x,), _op='slice')  # (batch, input_size)
+
+            # RNN cell: linear + nonlinearity
+            h_linear = x_t @ self.weight_ih + h_t @ self.weight_hh
+            if self.use_bias:
+                h_linear = h_linear + self.bias_ih + self.bias_hh
+
+            if self.nonlinearity == 'tanh':
+                h_t = h_linear.tanh()
+            elif self.nonlinearity == 'relu':
+                h_t = h_linear.relu()
+            else:
+                raise ValueError(f"Unknown nonlinearity {self.nonlinearity}")
+
+            outputs.append(h_t)
+
+        # stack outputs into one Tensor (seq_len, batch, hidden)
+        stacked_data = np.stack([o.data for o in outputs], axis=0)
+        output = Tensor(stacked_data, _children=tuple(outputs), _op='stack')
+
+        def _backward_stack():
+            for idx, o in enumerate(outputs):
+                o.grad += output.grad[idx]
+        output._backward = _backward_stack
+
+        # final hidden state
+        h_n = h_t
+        return output, h_n
+
+    def parameters(self):
+        params = [self.weight_ih, self.weight_hh]
+        if self.use_bias:
+            params.extend([self.bias_ih, self.bias_hh])
+        return params
+
+
+
+
+
 class Conv2D(Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True):
         super().__init__()
