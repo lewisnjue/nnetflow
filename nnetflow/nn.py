@@ -75,6 +75,21 @@ class Module:
     def forward(self, *args, **kwargs):
         raise NotImplementedError
 
+
+class Embedding(Module):
+    def __init__(self,num_embeddings,embedding_dim):
+        std = 1 / np.sqrt(num_embeddings)
+        w = np.random.randn(num_embeddings,embedding_dim) * std
+        self.weight = Tensor(w,shape=w.shape)
+    
+    def __call__(self,idx):
+        out  = self.weight.data[idx]
+        return out 
+    def parameters(self):
+        return [self.weight]
+    
+    
+
 class Linear(Module):
     def __init__(self, in_features, out_features, bias=True, activation=None):
         super().__init__()
