@@ -28,11 +28,8 @@ def im2col_2d(arr: np.ndarray,
     patches = windows.reshape(B, out_h*out_w, C*kH*kW).transpose(0,2,1)
     return patches
 
-def softmax(x: Tensor, dim: int = -1) -> Tensor:
-    exp_x = (x - x.data.max(dim=dim)).exp() 
-    return exp_x / exp_x.sum(dim=dim)
-
 class Module:
+    __doc__ = "Base class for all neural network modules. Modules can contain other modules, and parameters can be added to them." 
     def __init__(self):
         self._modules = {}
         self._parameters = []
@@ -50,7 +47,7 @@ class Module:
                     self.__dict__['_modules'][f'{name}[{idx}]'] = v
                 elif hasattr(v, 'parameters') and callable(v.parameters):
                     self.__dict__['_parameters'].extend(v.parameters())
-        elif hasattr(value, 'parameters') and callable(v.parameters):
+        elif hasattr(value, 'parameters') and callable(value.parameters):
             self.__dict__['_parameters'].extend(value.parameters())
         object.__setattr__(self, name, value)
 
@@ -77,14 +74,24 @@ class Module:
 
 
 class Embedding(Module):
-    def __init__(self,num_embeddings,embedding_dim):
+    def __init__(self, num_embeddings, embedding_dim):
+        super().__init__()
         std = 1 / np.sqrt(num_embeddings)
-        w = np.random.randn(num_embeddings,embedding_dim) * std
-        self.weight = Tensor(w,shape=w.shape)
-    
-    def __call__(self,idx):
-        out  = self.weight.data[idx]
-        return out 
+        w = np.random.randn(num_embeddings, embedding_dim) * std
+        self.weight = Tensor(w, shape=w.shape)
+
+    def __call__(self, idx):
+        # idx: numpy array or int or list of indices
+        out_data = self.weight.data[idx]
+        out = Tensor(out_data, _children=(self.weight,), _op='embedding')
+        def _backward():
+            # Accumulate gradients for the selected indices
+            if self.weight.grad.shape != self.weight.data.shape:
+                self.weight.grad = np.zeros_like(self.weight.data)
+            np.add.at(self.weight.grad, idx, out.grad)
+        out._backward = _backward
+        return out
+
     def parameters(self):
         return [self.weight]
     
@@ -316,31 +323,6 @@ class MaxPool2D(Module):
         return out_tensor
         
 
-class MLP(Module):
-    def __init__(self, nin, nouts, activation='relu', last_activation=None):
-        super().__init__()
-        self.layers = []
-        sz = [nin] + nouts
-        for i in range(len(nouts)):
-            act = activation if i < len(nouts) - 1 else last_activation
-            self.layers.append(Linear(sz[i], sz[i+1], activation=act))
-        self.last_activation = last_activation
-
-    def __call__(self, x):
-        for layer in self.layers:
-            x = layer(x)
-        if self.last_activation == 'sigmoid':
-            x = x.sigmoid()
-        elif self.last_activation == 'softmax':
-            x = softmax(x, dim=-1)
-        return x
-
-    def parameters(self):
-        params = []
-        for layer in self.layers:
-            params.extend(layer.parameters())
-        return params
-
 
 class CrossEntropyLoss:
     def __init__(self, eps: float = 1e-12):
@@ -380,14 +362,18 @@ def softmax(input: Tensor, dim: int) -> Tensor:
     exp_data = np.exp(shifted)
     exp_sum = exp_data.sum(axis=dim, keepdims=True)
     probs = exp_data / exp_sum
-    return Tensor(probs)
-
-class Softmax:
-    def __init__(self, dim: int):
-        self.dim = dim
-
-    def __call__(self, input: Tensor) -> Tensor:
-        return softmax(input, self.dim)
+    out = Tensor(probs, _children=(input,), _op='softmax')
+    def _backward():
+        # Jacobian-vector product for softmax
+        grad = out.grad
+        s = out.data
+        axis = dim
+        # For each sample in batch, compute grad = s * (grad - sum(grad * s))
+        dx = grad - (grad * s).sum(axis=axis, keepdims=True)
+        dx = s * dx
+        input.grad += dx
+    out._backward = _backward
+    return out
 
 class BCELoss:
     """input to this should be sigmod output"""
@@ -413,7 +399,13 @@ class MSELoss:
     def __call__(self, input: Tensor, target: Tensor) -> Tensor:
         diff = input - target
         mse = (diff * diff).sum() * (1.0 / input.data.size)
-        return mse
+        out = Tensor(mse.data, _children=(input, target), _op='mse')
+        def _backward():
+            grad = 2 * (input.data - target.data) / input.data.size
+            input.grad += grad * out.grad
+            # Optionally, target.grad -= grad * out.grad
+        out._backward = _backward
+        return out
 
 def mse_loss(input: Tensor, target: Tensor) -> Tensor:
     return MSELoss()(input, target)
@@ -423,7 +415,13 @@ class RMSELoss:
         diff = input - target
         mse = (diff * diff).sum() * (1.0 / input.data.size)
         rmse = mse ** 0.5
-        return rmse
+        out = Tensor(rmse.data, _children=(input, target), _op='rmse')
+        def _backward():
+            grad = (input.data - target.data) / (input.data.size * (rmse.data + 1e-12))
+            input.grad += grad * out.grad
+            # Optionally, target.grad -= grad * out.grad
+        out._backward = _backward
+        return out
 
 def rmse_loss(input: Tensor, target: Tensor) -> Tensor:
     return RMSELoss()(input, target)

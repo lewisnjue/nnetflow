@@ -1,10 +1,11 @@
 from .engine import Tensor as tensor 
 import numpy as np
+from typing import List
 
 """add optimizers here"""
 
 class SGD:
-    def __init__(self, params, lr=0.01, momentum=0.0):
+    def __init__(self, params:List[tensor], lr=0.01, momentum=0.0):
         self.params = params
         self.lr = lr
         self.momentum = momentum
