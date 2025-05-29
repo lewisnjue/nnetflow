@@ -6,7 +6,7 @@ from sklearn.datasets import make_regression, make_classification
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from nnetflow.engine import Tensor
-from nnetflow.nn import MLP, Linear, cross_entropy, mse_loss, Module, Conv2D, MaxPool2D
+from nnetflow.nn import  Linear, cross_entropy, mse_loss, Module, Conv2D, MaxPool2D
 from nnetflow.optim import SGD, Adam
 
 # --- 1. Regression Task ---
@@ -19,11 +19,22 @@ y = scaler_y.fit_transform(y.reshape(-1, 1)).astype(np.float32)
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 # nnetflow
-nf_model = MLP(nin=10, nouts=[32, 16, 1], activation='relu')
-nf_params = []
-for p in nf_model.parameters():
-    if hasattr(p, 'data') and isinstance(p.data, np.ndarray):
-        nf_params.append(p)
+class NFMLP(Module):
+    def __init__(self):
+        super().__init__()
+        self.fc1 = Linear(10, 32)
+        self.fc2 = Linear(32, 16)
+        self.fc3 = Linear(16, 1)
+    def forward(self, x):
+        x = self.fc1(x)
+        x = x.relu()
+        x = self.fc2(x)
+        x = x.relu()
+        x = self.fc3(x)
+        return x
+
+nf_model = NFMLP()
+nf_params = nf_model.parameters()
 nf_optimizer = SGD(nf_params, lr=0.01, momentum=0.9)
 batch_size = 64
 for epoch in range(1, 6):
@@ -104,15 +115,23 @@ y = y.astype(np.int64)
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
 # nnetflow
-nf_model = MLP(nin=10, nouts=[32, 16, 2], activation='relu')
-nf_params = []
-for p in nf_model.parameters():
-    if hasattr(p, 'data') and isinstance(p.data, np.ndarray):
-        nf_params.append(p)
+class NFMLP2(Module):
+    def __init__(self):
+        super().__init__()
+        self.fc1 = Linear(10, 32)
+        self.fc2 = Linear(32, 16)
+        self.fc3 = Linear(16, 2)
+    def forward(self, x):
+        x = self.fc1(x)
+        x = x.relu()
+        x = self.fc2(x)
+        x = x.relu()
+        x = self.fc3(x)
+        return x
+
+nf_model = NFMLP2()
+nf_params = nf_model.parameters()
 nf_optimizer = SGD(nf_params, lr=0.01, momentum=0.9)
-def nf_ce_loss(logits, targets):
-    targets_onehot = np.eye(2, dtype=np.float32)[targets]
-    return cross_entropy(logits, Tensor(targets_onehot))
 for epoch in range(1, 6):
     perm = np.random.permutation(X_train.shape[0])
     X_train, y_train = X_train[perm], y_train[perm]
@@ -121,7 +140,8 @@ for epoch in range(1, 6):
         xb = X_train[i:i+batch_size]
         yb = y_train[i:i+batch_size]
         logits = nf_model(Tensor(xb, shape=xb.shape))
-        loss = nf_ce_loss(logits, yb)
+        # Use cross_entropy directly with integer class labels
+        loss = cross_entropy(logits, Tensor(yb))
         total_loss += loss.data
         nf_optimizer.zero_grad()
         loss.backward()
@@ -195,7 +215,6 @@ X_test = (X_test - 0.1307) / 0.3081
 X_train = X_train.reshape(-1, 1, 28, 28)
 X_test = X_test.reshape(-1, 1, 28, 28)
 
-
 class NFConvNet(Module):
     def __init__(self):
         super().__init__()
@@ -204,7 +223,6 @@ class NFConvNet(Module):
         self.conv2 = Conv2D(8, 16, 3, stride=1, padding=1)
         self.pool2 = MaxPool2D(2)
         self.fc = Linear(16*7*7, 10)
-
     def forward(self, x):
         x = self.conv1(x)
         x = x.relu()
@@ -217,15 +235,9 @@ class NFConvNet(Module):
         x = self.fc(x)
         return x
 
-    def parameters(self):
-        return self.conv1.parameters() + self.conv2.parameters() + self.fc.parameters()
-
 nf_model = NFConvNet()
-nf_params = [p for p in nf_model.parameters() if hasattr(p, 'data')]
+nf_params = nf_model.parameters()
 nf_optimizer = Adam(nf_params, lr=0.001)
-def nf_ce_loss_img(logits, targets):
-    targets_onehot = np.eye(10, dtype=np.float32)[targets]
-    return cross_entropy(logits, Tensor(targets_onehot))
 batch_size = 64
 for epoch in range(1, 4):
     perm = np.random.permutation(X_train.shape[0])
@@ -235,7 +247,8 @@ for epoch in range(1, 4):
         xb = X_train[i:i+batch_size]
         yb = y_train[i:i+batch_size]
         logits = nf_model(Tensor(xb, shape=xb.shape))
-        loss = nf_ce_loss_img(logits, yb)
+        # Use cross_entropy directly with integer class labels
+        loss = cross_entropy(logits, Tensor(yb))
         total_loss += loss.data
         nf_optimizer.zero_grad()
         loss.backward()
