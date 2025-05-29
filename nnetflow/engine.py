@@ -2,6 +2,18 @@ from typing import List, Tuple
 import numpy as np
 
 class Tensor:
+    __doc__ = """"Tensor class for automatic differentiation and basic tensor operations.
+    This class supports operations like addition, multiplication, matrix multiplication,
+    summation, reshaping, and activation functions (ReLU, sigmoid, tanh, etc.).
+    It also implements backward propagation to compute gradients.
+    Attributes:
+        data (np.ndarray): The tensor data.
+        grad (np.ndarray): The gradient of the tensor.
+        _backward (callable): The function to compute gradients during backpropagation.
+        _prev (set): Previous tensors in the computation graph.
+        _op (str): The operation that produced this tensor.
+        shape (Tuple): The shape of the tensor data.
+    """
     def __init__(self, data: List[float] | np.ndarray, shape: Tuple = (1,), _children=(), _op='', dtype=None):
         if isinstance(data, np.ndarray):
             self.data = data
@@ -15,6 +27,15 @@ class Tensor:
 
     @staticmethod
     def _unbroadcast(grad, shape):
+        """"Unbroadcast the gradient to match the shape of the original tensor.
+        This function reduces the dimensions of the gradient to match the shape of the tensor
+        by summing over dimensions where the tensor shape is 1.
+        Args:
+            grad (np.ndarray): The gradient to unbroadcast.
+            shape (Tuple): The shape of the original tensor.
+        Returns:
+            np.ndarray: The unbroadcasted gradient.
+        """
         while len(grad.shape) > len(shape):
             grad = grad.sum(axis=0)
         for i, (g_dim, s_dim) in enumerate(zip(grad.shape, shape)):
@@ -23,6 +44,13 @@ class Tensor:
         return grad
 
     def sum(self, axis=None, keepdims=False):
+        """Sum the tensor along specified axes.
+        Args:
+            axis (int, tuple, list, optional): Axis or axes along which to sum. If None, sums all dimensions.
+            keepdims (bool, optional): If True, retains reduced dimensions with size 1.
+        Returns:
+            Tensor: A new tensor with the summed data.
+        """
         out_data = self.data.sum(axis=axis, keepdims=keepdims)
         out = Tensor(out_data, _children=(self,), _op='sum')
 
@@ -41,6 +69,12 @@ class Tensor:
         return out
 
     def __add__(self, other):
+        """Add another tensor or a scalar to this tensor.
+        Args:
+            other (Tensor, int, float): The tensor or scalar to add.
+        Returns:
+            Tensor: A new tensor with the result of the addition.
+        """
         other = other if isinstance(other, Tensor) else Tensor([other])
         out = Tensor(self.data + other.data, _children=(self, other), _op='+')
 
@@ -51,6 +85,12 @@ class Tensor:
         return out
 
     def __matmul__(self, other):
+        """Matrix multiplication with another tensor.
+        Args:
+            other (Tensor): The tensor to multiply with.
+        Returns:
+            Tensor: A new tensor with the result of the matrix multiplication.
+        """
         assert isinstance(other, Tensor), "unsupported operation"
         out = Tensor(self.data @ other.data, _children=(self, other), _op='@')
 
@@ -69,6 +109,12 @@ class Tensor:
         return out
 
     def __mul__(self, other):
+        """Element-wise multiplication with another tensor or a scalar.
+        Args:
+            other (Tensor, int, float): The tensor or scalar to multiply with.
+        Returns:
+            Tensor: A new tensor with the result of the multiplication.
+        """
         if isinstance(other, int): other = float(other)
         other = other if isinstance(other, Tensor) else Tensor([other])
         out = Tensor(self.data * other.data, _children=(self, other), _op='*')
@@ -80,6 +126,10 @@ class Tensor:
         return out
 
     def relu(self):
+        """Apply the ReLU activation function.
+        Returns:
+            Tensor: A new tensor with the result of the ReLU activation.
+        """
         out_data = np.where(self.data < 0, 0, self.data)
         out = Tensor(out_data, _children=(self,), _op='ReLU')
 
@@ -89,6 +139,10 @@ class Tensor:
         return out
 
     def sigmoid(self):
+        """Apply the sigmoid activation function.
+        Returns:
+            Tensor: A new tensor with the result of the sigmoid activation.
+        """
         clipped = np.clip(self.data, -60, 60)
         out_data = 1 / (1 + np.exp(-clipped))
         out = Tensor(out_data, _children=(self,), _op='sigmoid')
@@ -99,6 +153,10 @@ class Tensor:
         return out
 
     def exp(self):
+        """Apply the exponential activation function.
+        Returns:
+            Tensor: A new tensor with the result of the exponential activation.
+        """
         clipped = np.clip(self.data, -60, 60)
         out_data = np.exp(clipped)
         out = Tensor(out_data, _children=(self,), _op='exp')
@@ -109,6 +167,12 @@ class Tensor:
         return out
 
     def log(self, eps=1e-8):
+        """Apply the logarithm activation function.
+        Args:
+            eps (float, optional): A small value to avoid log(0). Defaults to 1e-8.
+        Returns:
+            Tensor: A new tensor with the result of the logarithm activation.
+        """
         safe_data = np.clip(self.data, eps, None)
         out = Tensor(np.log(safe_data), _children=(self,), _op='log')
 
@@ -118,6 +182,10 @@ class Tensor:
         return out
 
     def tanh(self):
+        """Apply the hyperbolic tangent activation function.
+        Returns:
+            Tensor: A new tensor with the result of the tanh activation.
+        """
         out_data = np.tanh(self.data)
         out = Tensor(out_data, _children=(self,), _op='tanh')
 
@@ -127,6 +195,12 @@ class Tensor:
         return out
 
     def __pow__(self, power):
+        """Raise the tensor to a scalar power.
+        Args:
+            power (int, float): The scalar power to raise the tensor to.
+        Returns:
+            Tensor: A new tensor with the result of the power operation.
+        """
         assert isinstance(power, (int, float)), "only supports scalar powers"
         out_data = np.power(self.data, power)
         out = Tensor(out_data, _children=(self,), _op='pow')
@@ -140,6 +214,12 @@ class Tensor:
         return self * (other ** -1)
 
     def reshape(self, *shape):
+        """Reshape the tensor to a new shape.
+        Args:
+            shape (int, ...): The new shape to reshape the tensor to.
+        Returns:
+            Tensor: A new tensor with the reshaped data.
+        """
         out = Tensor(self.data.reshape(shape), _children=(self,), _op='reshape')
 
         def _backward():
@@ -148,9 +228,18 @@ class Tensor:
         return out
 
     def zero_grad(self):
+        """Reset the gradient of the tensor to zero.
+        This is useful before starting a new backward pass to avoid accumulating gradients.
+        """
         self.grad = np.zeros_like(self.data)
 
     def backward(self, grad_clip=None):
+        """Perform backpropagation to compute gradients.
+        This method traverses the computation graph in reverse order and computes gradients
+        for each tensor using the stored backward functions.
+        Args:
+            grad_clip (float, optional): If provided, clips the gradients to this value.
+        """
         topo = []
         visited = set()
 
