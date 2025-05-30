@@ -3,6 +3,11 @@
 A minimal neural network framework with autodiff, inspired by micrograd and pytorch.
 
 ## Installation
+
+```bash
+pip install nnetflow
+```
+
 ```bash
 import numpy as np
 from nnetflow.nn import Conv2D, MaxPool2D, Linear, MLP, CrossEntropyLoss, Module
