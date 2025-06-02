@@ -425,3 +425,36 @@ class RMSELoss:
 
 def rmse_loss(input: Tensor, target: Tensor) -> Tensor:
     return RMSELoss()(input, target)
+
+
+class LayerNorm(Module):
+    def __init__(self, normalized_shape: Union[int, Tuple[int]], eps: float = 1e-5):
+        super().__init__()
+        if isinstance(normalized_shape, int):
+            normalized_shape = (normalized_shape,)
+        self.normalized_shape = normalized_shape
+        self.eps = eps
+        self.weight = Tensor(np.ones(normalized_shape))
+        self.bias = Tensor(np.zeros(normalized_shape))
+
+    def forward(self, x: Tensor) -> Tensor:
+        mean = x.mean(axis=-1, keepdims=True)
+        var = x.var(axis=-1, keepdims=True)
+        normed = (x - mean) / np.sqrt(var + self.eps)
+        out_data = normed * self.weight.data + self.bias.data
+        out = Tensor(out_data, _children=(x,), _op='layer_norm')
+
+        def _backward():
+            # Backward pass for LayerNorm
+            B, *shape = x.data.shape
+            grad_normed = out.grad * self.weight.data
+            grad_mean = -grad_normed.mean(axis=-1, keepdims=True)
+            grad_var = -0.5 * grad_normed * (x.data - mean) / (var + self.eps) ** 1.5
+            grad_var += 2 * (x.data - mean) * grad_var.mean(axis=-1, keepdims=True)
+            x.grad += (grad_normed / np.sqrt(var + self.eps)) + grad_mean + grad_var
+
+        out._backward = _backward
+        return out
+
+    def parameters(self):
+        return [self.weight, self.bias]

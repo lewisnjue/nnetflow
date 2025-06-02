@@ -68,6 +68,67 @@ class Tensor:
         out._backward = _backward
         return out
 
+    def mean(self, axis=-None, keepdims=False):
+        """Compute the mean of the tensor along specified axes.
+        Args:
+            axis (int, tuple, list, optional): Axis or axes along which to compute the mean. If None, computes the mean over all dimensions.
+            keepdims (bool, optional): If True, retains reduced dimensions with size 1.
+        Returns:
+            Tensor: A new tensor with the mean data.
+        """
+        out_data = self.data.mean(axis=axis, keepdims=keepdims)
+        out = Tensor(out_data, _children=(self,), _op='mean')
+
+        def _backward():
+            grad = out.grad / np.prod(self.data.shape) if axis is None else np.prod([self.data.shape[i] for i in (axis if isinstance(axis, (tuple, list)) else [axis])])
+            if not keepdims:
+                grad = np.broadcast_to(grad, self.data.shape)
+            self.grad += grad
+        out._backward = _backward
+        return out
+    
+    def var(self, axis=None, keepdims=False):
+        """Compute the variance of the tensor along specified axes.
+        Args:
+            axis (int, tuple, list, optional): Axis or axes along which to compute the variance. If None, computes the variance over all dimensions.
+            keepdims (bool, optional): If True, retains reduced dimensions with size 1.
+        Returns:
+            Tensor: A new tensor with the variance data.
+        """
+        out_data = self.data.var(axis=axis, keepdims=keepdims)
+        out = Tensor(out_data, _children=(self,), _op='var')
+
+        def _backward():
+            n = np.prod(self.data.shape) if axis is None else np.prod([self.data.shape[i] for i in (axis if isinstance(axis, (tuple, list)) else [axis])])
+            grad = out.grad / n
+            if not keepdims:
+                grad = np.broadcast_to(grad, self.data.shape)
+            self.grad += grad
+        out._backward = _backward
+        return out
+    
+    def std(self, axis=None, keepdims=False):
+        """Compute the standard deviation of the tensor along specified axes.
+        Args:
+            axis (int, tuple, list, optional): Axis or axes along which to compute the standard deviation. If None, computes the std over all dimensions.
+            keepdims (bool, optional): If True, retains reduced dimensions with size 1.
+        Returns:
+            Tensor: A new tensor with the standard deviation data.
+        """
+        out_data = self.data.std(axis=axis, keepdims=keepdims)
+        out = Tensor(out_data, _children=(self,), _op='std')
+
+        def _backward():
+            n = np.prod(self.data.shape) if axis is None else np.prod([self.data.shape[i] for i in (axis if isinstance(axis, (tuple, list)) else [axis])])
+            grad = out.grad / (n * np.sqrt(np.var(self.data, axis=axis, keepdims=keepdims) + 1e-8))
+            if not keepdims:
+                grad = np.broadcast_to(grad, self.data.shape)
+            self.grad += grad
+        out._backward = _backward
+        return out
+    
+
+
     def __add__(self, other):
         """Add another tensor or a scalar to this tensor.
         Args:
