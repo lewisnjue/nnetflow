@@ -440,21 +440,124 @@ class LayerNorm(Module):
     def forward(self, x: Tensor) -> Tensor:
         mean = x.mean(axis=-1, keepdims=True)
         var = x.var(axis=-1, keepdims=True)
-        normed = (x - mean) / np.sqrt(var + self.eps)
+        # Use Tensor's sqrt method for autograd compatibility
+        denom = (var + self.eps)
+        if not isinstance(denom, Tensor):
+            denom = Tensor(denom)
+        denom = denom.sqrt()
+        normed = (x - mean) / denom
         out_data = normed * self.weight.data + self.bias.data
         out = Tensor(out_data, _children=(x,), _op='layer_norm')
 
         def _backward():
-            # Backward pass for LayerNorm
-            B, *shape = x.data.shape
             grad_normed = out.grad * self.weight.data
             grad_mean = -grad_normed.mean(axis=-1, keepdims=True)
-            grad_var = -0.5 * grad_normed * (x.data - mean) / (var + self.eps) ** 1.5
-            grad_var += 2 * (x.data - mean) * grad_var.mean(axis=-1, keepdims=True)
-            x.grad += (grad_normed / np.sqrt(var + self.eps)) + grad_mean + grad_var
+            denom3 = denom.data ** 3
+            grad_var = -0.5 * grad_normed * (x.data - mean.data) / denom3
+            grad_var += 2 * (x.data - mean.data) * grad_var.mean(axis=-1, keepdims=True)
+            x.grad += (grad_normed / denom.data) + grad_mean + grad_var
 
         out._backward = _backward
         return out
 
     def parameters(self):
         return [self.weight, self.bias]
+
+
+class ModuleList(Module):
+    def __init__(self, modules: Optional[List[Module]] = None):
+        super().__init__()
+        self._modules = {}
+        if modules is not None:
+            for i, module in enumerate(modules):
+                self.add_module(f'layer_{i}', module)
+
+    def add_module(self, name: str, module: Module):
+        if not isinstance(module, Module):
+            raise TypeError(f"Expected a Module instance, got {type(module)}")
+        self._modules[name] = module
+    
+    def __iter__(self):
+        return iter(self._modules.values())
+    
+    def __next__(self):
+        return next(iter(self._modules.values()))
+
+    def parameters(self):
+        params = []
+        for module in self._modules.values():
+            params.extend(module.parameters())
+        return params
+
+
+TRAINING = False
+
+def train():
+    global TRAINING
+    TRAINING = True
+
+def eval():
+    global TRAINING
+    TRAINING = False
+
+def dropout(x: Tensor, p: float = 0.5) -> Tensor:
+    if p < 0 or p >= 1:
+        raise ValueError("Dropout probability must be in the range [0, 1).")
+    if not TRAINING or p == 0:
+        return x  # No dropout, return input as is
+
+    mask = np.random.binomial(1, 1 - p, size=x.data.shape)
+    out_data = x.data * mask / (1 - p)  # Scale by keep probability
+    out = Tensor(out_data, _children=(x,), _op='dropout')
+
+    def _backward():
+        x.grad += out.grad * mask / (1 - p)
+
+    out._backward = _backward
+    return out
+
+class Dropout(Module):
+    def __init__(self, p: float = 0.5):
+        super().__init__()
+        self.p = p
+
+    def forward(self, x: Tensor) -> Tensor:
+        return dropout(x, self.p)
+
+    def __call__(self, x: Tensor) -> Tensor:
+        return self.forward(x)
+
+
+class ReLU(Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x: Tensor) -> Tensor:
+        out_data = np.where(x.data < 0, 0, x.data)
+        out = Tensor(out_data, _children=(x,), _op='ReLU')
+
+        def _backward():
+            x.grad += (out.data > 0) * out.grad
+        out._backward = _backward
+        return out
+
+    def __call__(self, x: Tensor) -> Tensor:
+        return self.forward(x)
+class Sequential(Module):
+    def __init__(self, *args: Module):
+        super().__init__()
+        self._modules = {f'layer_{i}': layer for i, layer in enumerate(args)}
+
+    def forward(self, x: Tensor) -> Tensor:
+        for layer in self._modules.values():
+            x = layer(x)
+        return x
+
+    def parameters(self):
+        params = []
+        for layer in self._modules.values():
+            params.extend(layer.parameters())
+        return params
+    def __call__(self, x: Tensor) -> Tensor:
+        return self.forward(x)
+

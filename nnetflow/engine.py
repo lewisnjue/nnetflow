@@ -14,11 +14,16 @@ class Tensor:
         _op (str): The operation that produced this tensor.
         shape (Tuple): The shape of the tensor data.
     """
-    def __init__(self, data: List[float] | np.ndarray, shape: Tuple = (1,), _children=(), _op='', dtype=None):
-        if isinstance(data, np.ndarray):
+    def __init__(self, data: List[float] | np.ndarray, shape: Tuple = (), _children=(), _op='', dtype=None):
+        # If data is a Tensor, extract its .data
+        if isinstance(data, Tensor):
+            self.data = data.data
+        elif isinstance(data, np.ndarray):
             self.data = data
         else:
-            self.data = np.array(data, dtype=dtype if dtype else float).reshape(shape)
+            self.data = np.array(data, dtype=dtype if dtype else float)
+        if shape and self.data.shape != shape:
+            self.data = self.data.reshape(shape)
         self.grad = np.zeros_like(self.data)
         self._backward = lambda: None
         self._prev = set(_children)
@@ -68,7 +73,7 @@ class Tensor:
         out._backward = _backward
         return out
 
-    def mean(self, axis=-None, keepdims=False):
+    def mean(self, axis=None, keepdims=False):
         """Compute the mean of the tensor along specified axes.
         Args:
             axis (int, tuple, list, optional): Axis or axes along which to compute the mean. If None, computes the mean over all dimensions.
@@ -139,6 +144,7 @@ class Tensor:
         other = other if isinstance(other, Tensor) else Tensor([other])
         out = Tensor(self.data + other.data, _children=(self, other), _op='+')
 
+
         def _backward():
             self.grad += Tensor._unbroadcast(out.grad, self.data.shape)
             other.grad += Tensor._unbroadcast(out.grad, other.data.shape)
@@ -156,14 +162,18 @@ class Tensor:
         out = Tensor(self.data @ other.data, _children=(self, other), _op='@')
 
         def _backward():
+            # Broadcast out.grad to match the shape of self.data and other.data if needed
+            grad_shape = out.grad.shape
+            self_shape = self.data.shape
+            other_shape = other.data.shape
+            # Compute gradients
             self_grad = np.matmul(out.grad, np.swapaxes(other.data, -1, -2))
             other_grad = np.matmul(np.swapaxes(self.data, -1, -2), out.grad)
-            # Sum over broadcasted batch dimension for self
-            if self.data.shape[0] == 1 and out.data.shape[0] > 1:
-                self_grad = self_grad.sum(axis=0, keepdims=True)
-            # Sum over broadcasted batch dimension for other, if applicable
-            if other.data.shape[0] == 1 and out.data.shape[0] > 1:
-                other_grad = other_grad.sum(axis=0, keepdims=True)
+            # Broadcast if needed
+            if self_grad.shape != self_shape:
+                self_grad = np.sum(self_grad, axis=0)
+            if other_grad.shape != other_shape:
+                other_grad = np.sum(other_grad, axis=0)
             self.grad += self_grad
             other.grad += other_grad
         out._backward = _backward
@@ -286,6 +296,74 @@ class Tensor:
         def _backward():
             self.grad += out.grad.reshape(self.data.shape)
         out._backward = _backward
+        return out 
+    
+    def permute(self, *dims):
+        """Permute the dimensions of the tensor.
+        Args:
+            dims (int, ...): The new order of dimensions.
+        Returns:
+            Tensor: A new tensor with the permuted data.
+        """
+        out = Tensor(self.data.transpose(dims), _children=(self,), _op='permute')
+
+        def _backward():
+            self.grad += out.grad.transpose(np.argsort(dims))
+        out._backward = _backward
+        return out
+    def mask_fill(self, mask, value=0):
+        """Fill the tensor with a specified value where the mask is True.
+        Args:
+            mask (Tensor): A boolean tensor indicating where to fill.
+            value (int, float, optional): The value to fill in the masked positions. Defaults to 0.
+        Returns:
+            Tensor: A new tensor with the filled data.
+        """
+        out_data = np.where(mask.data, value, self.data)
+        out = Tensor(out_data, _children=(self, mask), _op='mask_fill')
+
+        def _backward():
+            self.grad += out.grad * mask.data
+            mask.grad += out.grad * (self.data == value)
+        out._backward = _backward
+        return out
+    
+    def softmax(self,dim=-1):
+        axis = dim 
+
+        """Apply the softmax activation function along a specified axis.
+        Args:
+            axis (int, optional): The axis along which to apply softmax. Defaults to -1 (last axis).
+        Returns:
+            Tensor: A new tensor with the result of the softmax activation.
+        """
+        data = self.data
+        shifted = data - np.max(data, axis=axis, keepdims=True)
+        exp_data = np.exp(shifted)
+        exp_sum = exp_data.sum(axis=axis, keepdims=True)
+        probs = exp_data / exp_sum
+        out = Tensor(probs, _children=(self,), _op='softmax')
+        def _backward():
+            grad = out.grad
+            s = out.data
+            # For each sample in batch, compute grad = s * (grad - sum(grad * s))
+            dx = grad - (grad * s).sum(axis=axis, keepdims=True)
+            dx = s * dx
+            self.grad += dx
+        out._backward = _backward
+        return out
+    
+    def sqrt(self):
+        """Apply the square root activation function.
+        Returns:
+            Tensor: A new tensor with the result of the square root activation.
+        """
+        out_data = np.sqrt(self.data)
+        out = Tensor(out_data, _children=(self,), _op='sqrt')
+
+        def _backward():
+            self.grad += out.grad / (2 * np.sqrt(self.data + 1e-8))
+        out._backward = _backward
         return out
 
     def zero_grad(self):
@@ -330,4 +408,24 @@ class Tensor:
     def __sub__(self, other): return self + (-other)
     def __rsub__(self, other): return other + (-self)
     def __rmul__(self, other): return self * other
+    def __getitem__(self, idx):
+        # Support slicing and advanced indexing for Tensor
+        if isinstance(idx, tuple) or isinstance(idx, int) or isinstance(idx, slice) or (hasattr(idx, '__iter__') and not isinstance(idx, str)):
+            out = Tensor(self.data[idx], _children=(self,), _op='slice')
+            def _backward():
+                # Broadcasting-safe gradient accumulation for slices
+                grad = np.zeros_like(self.data)
+                grad_idx = grad[idx]
+                # If out.grad shape doesn't match grad_idx, try summing over batch dim
+                if grad_idx.shape == out.grad.shape:
+                    grad[idx] = out.grad
+                elif out.grad.shape[0] < grad_idx.shape[0] and grad_idx.shape[1:] == out.grad.shape[1:]:
+                    # Sum over batch dimension if needed
+                    grad[idx] = out.grad.sum(axis=0)
+                else:
+                    grad[idx] = np.broadcast_to(out.grad, grad_idx.shape)
+                self.grad += grad
+            out._backward = _backward
+            return out
+        raise TypeError(f"Invalid index type: {type(idx)}")
     def __repr__(self): return f"Tensor(data={self.data}, grad={self.grad})"
