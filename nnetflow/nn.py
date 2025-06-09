@@ -256,7 +256,50 @@ class Conv2D(Module):
     def parameters(self):
         return [self.weight, self.bias] if self.bias is not None else [self.weight]
 
+class Conv1D(Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bias=True):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size,)
+        self.kernel_size = kernel_size
+        self.stride = stride
+        self.padding = padding
+        std = np.sqrt(2.0 / (in_channels * kernel_size[0]))
+        self.weight = Tensor(np.random.randn(out_channels, in_channels, *kernel_size) * std)
+        self.bias = Tensor(np.zeros(out_channels)) if bias else None
 
+    def __call__(self, x):
+        if self.padding > 0:
+            x_padded = Tensor(np.pad(x.data, ((0,0), (0,0), (self.padding, self.padding)), mode='constant'), _children=(x,), _op='pad')
+            def _pad_backward():
+                x.grad += x_padded.grad[:, :, self.padding:-self.padding]
+            x_padded._backward = _pad_backward
+        else:
+            x_padded = x
+
+        B, C, L = x_padded.data.shape
+        kL = self.kernel_size[0]
+        out_l = (L - kL) // self.stride + 1
+
+        cols_data = im2col_2d(x_padded.data.reshape(B, C, 1, L), (kL, 1), self.stride)
+        cols = Tensor(cols_data.reshape(B, C * kL, out_l), _children=(x_padded,), _op='im2col')
+        weight_reshaped = self.weight.reshape(1, self.out_channels, C * kL)
+
+        out = weight_reshaped @ cols  # (B, out_channels, out_l)
+        out = out.reshape(B, self.out_channels, out_l)
+
+        if self.bias is not None:
+            # Reshape bias to (1, out_channels) for proper broadcasting
+            bias_reshaped = self.bias.reshape(1, self.out_channels)
+            out = out + bias_reshaped
+
+        return out
+
+    def parameters(self):
+        return [self.weight, self.bias] if self.bias is not None else [self.weight]
+    
 class MaxPool2D(Module):
     def __init__(self, kernel_size: int, stride: Optional[int] = None):
         super().__init__()
@@ -426,6 +469,20 @@ class RMSELoss:
 def rmse_loss(input: Tensor, target: Tensor) -> Tensor:
     return RMSELoss()(input, target)
 
+class L1Loss(Module):
+    def __call__(self, input: Tensor, target: Tensor) -> Tensor:
+        diff = input - target
+        l1 = np.abs(diff.data).mean()
+        out = Tensor(np.array(l1), _children=(input, target), _op='l1')
+        
+        def _backward():
+            input.grad += np.sign(diff.data) * out.grad / input.data.size
+            # Optionally, target.grad -= np.sign(diff.data) * out.grad / input.data.size
+        out._backward = _backward
+        return out
+def l1_loss(input: Tensor, target: Tensor) -> Tensor:
+    return L1Loss()(input, target)
+
 
 class LayerNorm(Module):
     def __init__(self, normalized_shape: Union[int, Tuple[int]], eps: float = 1e-5):
@@ -488,7 +545,26 @@ class ModuleList(Module):
         for module in self._modules.values():
             params.extend(module.parameters())
         return params
+    
+class ModuleDict(Module):
+    def __init__(self, modules: Optional[dict] = None):
+        super().__init__()
+        self._modules = {}
+        if modules is not None:
+            for name, module in modules.items():
+                self.add_module(name, module)
 
+    def add_module(self, name: str, module: Module):
+        if not isinstance(module, Module):
+            raise TypeError(f"Expected a Module instance, got {type(module)}")
+        self._modules[name] = module
+
+    def parameters(self):
+        params = []
+        for module in self._modules.values():
+            params.extend(module.parameters())
+        return params
+    
 
 TRAINING = False
 
