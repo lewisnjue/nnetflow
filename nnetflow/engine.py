@@ -7,13 +7,16 @@ DEVICE  = 'cuda'  if is_cuda_available() else 'cpu' # i want to use this as the 
 class Tensor:
     def __init__(
         self,
-        data: Union[List[float], List[int], np.ndarray, cp.ndarray],
+        data: Union[List[float], List[int], np.ndarray, cp.ndarray,int,float],
         _children: Tuple['Tensor', ...] = (),
         _op: str = '',
         device: str = DEVICE,
         dtype: str = 'float32',
         require_grad: bool = True
     ) -> None:
+        if isinstance(data, (int, float)):
+            data = np.array(data, dtype=dtype) if device == 'cpu' else cp.array(data, dtype=dtype)
+            _children = ()
         self.require_grad = require_grad
         if not self.require_grad:
             assert _children == (), "Children must be empty if require_grad is False"
@@ -32,6 +35,8 @@ class Tensor:
                 data = np.array(data, dtype=self.dtype)
             elif isinstance(data, np.ndarray):
                 data = data.astype(self.dtype)
+            elif np.isscalar(data):
+                data = np.array(data, dtype=self.dtype)
             else:
                 raise TypeError("Data must be a list or np.ndarray for CPU tensors.")
             self.data = data
@@ -42,6 +47,8 @@ class Tensor:
                 data = cp.asarray(data, dtype=self.dtype)
             elif isinstance(data, cp.ndarray):
                 data = data.astype(self.dtype)
+            elif cp.isscalar(data):
+                data = cp.array(data, dtype=self.dtype)
             else:
                 raise TypeError("Data must be a list, np.ndarray, or cp.ndarray for CUDA tensors.")
             self.data = data
@@ -189,15 +196,28 @@ class Tensor:
         return out
 
     def mean(self, axis: Union[int, Tuple[int, ...], None] = None, keepdims: bool = False) -> 'Tensor':
-        out = self.sum(axis, keepdims)
+        out_data = self.data.mean(axis=axis, keepdims=keepdims)
+        out = Tensor(out_data, (self,) if self.require_grad else (), 'mean', self.device, self.dtype, require_grad=self.require_grad)
+        
         n = int(np.prod(self.shape)) if axis is None else int(np.prod([self.shape[i] for i in (axis if isinstance(axis, tuple) else (axis,))]))
         if self.require_grad:
             def _backward():
-                if out.grad is not None and self.grad is not None:
-                    self.grad += out.grad * (1.0 / n)
+                if out.grad is not None:
+                    grad = out.grad / n
+                    if axis is None:
+                        grad = (np.ones_like(self.data) if self.device=='cpu' else cp.ones_like(self.data)) * grad
+                    else:
+                        if not keepdims:
+                            shape_bd = list(self.shape)
+                            for ax in (axis if isinstance(axis, tuple) else (axis,)):
+                                shape_bd[ax] = 1
+                            grad = grad.reshape(shape_bd)
+                        grad = (np.broadcast_to if self.device=='cpu' else cp.broadcast_to)(grad, self.shape)
+                    if self.grad is not None:
+                        self.grad += grad
             out._backward = _backward
-        out._op = 'mean'
         return out
+
 
     def var(self, axis: Union[int, Tuple[int, ...], None] = None, keepdims: bool = False) -> 'Tensor':
         out_data = self.data.var(axis=axis, keepdims=keepdims)
@@ -345,19 +365,22 @@ class Tensor:
             out._backward = _backward
         return out
 
-    def __sub__(self, other: 'Tensor') -> 'Tensor':
-        if isinstance(other, Tensor):
-            other_data = other.data
-        else:
-            other_data = other
-        out = Tensor(self.data - other_data, (self, other) if isinstance(other, Tensor) else (self,), '-', self.device, self.dtype, require_grad=self.require_grad or (other.require_grad if isinstance(other, Tensor) else False))
+    def __sub__(self, other: Union['Tensor',int,float]) -> 'Tensor':
+        assert isinstance(other, (Tensor, int, float)), "Subtraction only supported with Tensor or scalar"
+        if not isinstance(other, Tensor):
+            other = Tensor(np.array(other, dtype=self.dtype), (), 'scalar', self.device, self.dtype)
+        
+        out_data = self.data - other.data # this is a numpy array or cupy array 
+        out = Tensor(out_data, (self, other), '-', self.device, self.dtype)
+
         if out.require_grad:
             def _backward():
                 if self.grad is not None and out.grad is not None:
                     self.grad += Tensor._unbroadcast(out.grad, self.shape)
-                if isinstance(other, Tensor) and other.grad is not None and out.grad is not None:
+                if other.grad is not None and out.grad is not None:
                     other.grad -= Tensor._unbroadcast(out.grad, other.shape)
             out._backward = _backward
+
         return out
 
     def __mul__(self, other: Union[int, float, 'Tensor']) -> 'Tensor':
@@ -376,17 +399,13 @@ class Tensor:
         return out
 
     def __pow__(self, power: Union[int, float]) -> 'Tensor':
-        if isinstance(power, Tensor):
-            power_data = power.data
-        else:
-            power_data = power
-        out = Tensor(self.data ** power_data, (self, power) if isinstance(power, Tensor) else (self,), 'pow', self.device, self.dtype, require_grad=self.require_grad or (power.require_grad if isinstance(power, Tensor) else False))
+        assert isinstance(power, (int, float)), "Power must be an integer or float"
+        out_data = self.data ** power # this is is a numpy or cupy array 
+        out = Tensor(out_data, (self,), '**', self.device, self.dtype, require_grad=self.require_grad)
         if out.require_grad:
             def _backward():
                 if self.grad is not None and out.grad is not None:
-                    self.grad += Tensor._unbroadcast(power_data * (self.data ** (power_data - 1)) * out.grad, self.shape)
-                if isinstance(power, Tensor) and power.grad is not None and out.grad is not None:
-                    power.grad += Tensor._unbroadcast((self.data ** power_data) * np.log(self.data) * out.grad, power.shape)
+                    self.grad += Tensor._unbroadcast(power * (self.data ** (power - 1)) * out.grad, self.shape)
             out._backward = _backward
         return out
 
@@ -414,10 +433,11 @@ class Tensor:
         if out.require_grad:
             def _backward():
                 grad = out.grad
+                # Fix: Use grad @ other_data for self.grad, grad.T @ self.data for other.grad
                 if self.grad is not None and grad is not None:
-                    self.grad += (other_data.T @ grad)
+                    self.grad += grad @ other_data
                 if other.grad is not None and grad is not None:
-                    other.grad += (self.data.T @ grad)
+                    other.grad += grad.T @ self.data
             out._backward = _backward
         return out
 
@@ -436,6 +456,19 @@ class Tensor:
                     self.grad += grad_full
             out._backward = _backward
         return out
+    
+    def reshape(self, *shape: int) -> 'Tensor':
+        out_data = self.data.reshape(shape)
+        require_grad = self.require_grad
+        children = (self,) if require_grad else ()
+        out = Tensor(out_data, children, 'reshape', self.device, self.dtype, require_grad=require_grad)
+        if require_grad:
+            def _backward():
+                if self.grad is not None and out.grad is not None:
+                    self.grad += out.grad.reshape(self.shape)
+            out._backward = _backward
+        return out
+    
 
     def item(self) -> float:
         if self.data.size != 1:
