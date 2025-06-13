@@ -1,5 +1,6 @@
 from typing import List, Literal, Optional, Any
 from .engine import Tensor
+import pickle 
 
 
 
@@ -48,3 +49,11 @@ class Module:
     
     def parameters(self) -> List[Tensor]:
         return self.params()
+    
+    def save(self, path: str) -> None:
+        with open(path, 'wb') as f:
+            pickle.dump(self, f)
+    @classmethod
+    def load(cls, path: str) -> 'Module':
+        with open(path, 'rb') as f:
+            return pickle.load(f)

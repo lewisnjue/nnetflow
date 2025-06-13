@@ -5,6 +5,9 @@ from .utils import is_cuda_available
 
 DEVICE  = 'cuda'  if is_cuda_available() else 'cpu' # i want to use this as the default device
 class Tensor:
+    @staticmethod
+    def _noop_backward():
+        pass
     def __init__(
         self,
         data: Union[List[float], List[int], np.ndarray, cp.ndarray,int,float],
@@ -55,7 +58,7 @@ class Tensor:
         self.data: np.ndarray | cp.ndarray = self.data
         self.grad: np.ndarray | cp.ndarray | None = self.grad
         self.shape = self.data.shape
-        self._backward = lambda: None
+        self._backward = Tensor._noop_backward
 
     @staticmethod
     def _unbroadcast(
@@ -350,6 +353,22 @@ class Tensor:
             out._backward = _backward
         return out
 
+    def relu(self) -> 'Tensor':
+        if self.device == 'cpu':
+            out_data = np.maximum(self.data, 0)
+        else:
+            out_data = cp.maximum(self.data, 0)
+        require_grad = self.require_grad
+        children = (self,) if require_grad else ()
+        out = Tensor(out_data, children, 'relu', self.device, self.dtype, require_grad=require_grad)
+        if require_grad:
+            def _backward():
+                if out.grad is not None and self.grad is not None:
+                    mask = (self.data > 0).astype(self.data.dtype)
+                    self.grad += out.grad * mask
+            out._backward = _backward
+        return out
+
     def __add__(self, other: 'Tensor') -> 'Tensor':
         if isinstance(other, Tensor):
             other_data = other.data
@@ -433,11 +452,11 @@ class Tensor:
         if out.require_grad:
             def _backward():
                 grad = out.grad
-                # Fix: Use grad @ other_data for self.grad, grad.T @ self.data for other.grad
+                # For x @ weight: dL/dx = grad @ weight.T, dL/dweight = x.T @ grad
                 if self.grad is not None and grad is not None:
-                    self.grad += grad @ other_data
+                    self.grad += grad @ other_data.T
                 if other.grad is not None and grad is not None:
-                    other.grad += grad.T @ self.data
+                    other.grad += self.data.T @ grad
             out._backward = _backward
         return out
 
