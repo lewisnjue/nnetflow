@@ -1,15 +1,14 @@
 from .engine import Tensor
-from .module import Module
 from typing import List, Optional, Any
 
 
 
-class CrossEntropyLoss(Module):
+class CrossEntropyLoss:
     def __init__(self, reduction: str = 'mean') -> None:
         super().__init__()
         self.reduction = reduction
 
-    def forward(self, logits: Tensor, targets: Tensor) -> Tensor:
+    def __call__(self, logits: Tensor, targets: Tensor) -> Tensor:
         probs = logits.softmax(axis=-1) 
         loss = -targets * probs.log()
         if self.reduction == 'mean':
@@ -23,12 +22,12 @@ class CrossEntropyLoss(Module):
         return f"CrossEntropyLoss(reduction='{self.reduction}')"
 
 
-class L1Loss(Module):
+class L1Loss:
     def __init__(self, reduction: str = 'mean') -> None:
         super().__init__()
         self.reduction = reduction
 
-    def forward(self, input: Tensor, target: Tensor) -> Tensor:
+    def __call__(self, input: Tensor, target: Tensor) -> Tensor:
         loss = (input - target).abs()
         if self.reduction == 'mean':
             return loss.mean().reshape(1)
@@ -41,12 +40,12 @@ class L1Loss(Module):
         return f"L1Loss(reduction='{self.reduction}')"
 
 
-class MSELoss(Module):
+class MSELoss:
     def __init__(self, reduction: str = 'mean') -> None:
         super().__init__()
         self.reduction = reduction
 
-    def forward(self, input: Tensor, target: Tensor) -> Tensor:
+    def __call__(self, input: Tensor, target: Tensor) -> Tensor:
         loss = (input - target) ** 2  # do element wise subtraction and square 
         
         if self.reduction == 'mean':
