@@ -1,10 +1,9 @@
 from .engine import Tensor
-from .module import Module
 from typing import List, Optional, Any
 
 
 
-class CrossEntropyLoss():
+class CrossEntropyLoss:
     def __init__(self, reduction: str = 'mean') -> None:
         super().__init__()
         self.reduction = reduction
@@ -23,7 +22,8 @@ class CrossEntropyLoss():
         return f"CrossEntropyLoss(reduction='{self.reduction}')"
 
 
-class L1Loss():
+
+class L1Loss:
     def __init__(self, reduction: str = 'mean') -> None:
         super().__init__()
         self.reduction = reduction
@@ -41,7 +41,9 @@ class L1Loss():
         return f"L1Loss(reduction='{self.reduction}')"
 
 
-class MSELoss():
+
+class MSELoss:
+
     def __init__(self, reduction: str = 'mean') -> None:
         super().__init__()
         self.reduction = reduction
