@@ -22,6 +22,7 @@ class CrossEntropyLoss:
         return f"CrossEntropyLoss(reduction='{self.reduction}')"
 
 
+
 class L1Loss:
     def __init__(self, reduction: str = 'mean') -> None:
         super().__init__()
@@ -40,7 +41,9 @@ class L1Loss:
         return f"L1Loss(reduction='{self.reduction}')"
 
 
+
 class MSELoss:
+
     def __init__(self, reduction: str = 'mean') -> None:
         super().__init__()
         self.reduction = reduction
