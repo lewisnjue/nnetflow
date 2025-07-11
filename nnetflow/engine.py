@@ -1,5 +1,6 @@
 import numpy as np
-import cupy as cp
+import cupy as cp 
+
 from typing import Union, List, Literal, Tuple, Optional
 from .utils import is_cuda_available
 
@@ -21,13 +22,13 @@ class Tensor:
             data = np.array(data, dtype=dtype) if device == 'cpu' else cp.array(data, dtype=dtype)
             _children = ()
         self.require_grad = require_grad
-        if not self.require_grad:
+        if not self.require_grad: # dont know if this will break my nnetwork but i will work on that later 
             assert _children == (), "Children must be empty if require_grad is False"
             self._children = () 
             self.grad = None
         else:
             self._children = _children
-            self.grad = np.zeros_like(data) if device == 'cpu' else cp.zeros_like(data)
+            self.grad = np.zeros_like(data) if device == 'cpu' else cp.zeros_like(data) # this is diffrent from pytorch 
         self.device = device
         self.dtype = dtype
         self._op = _op
@@ -67,8 +68,8 @@ class Tensor:
     ) -> Union[np.ndarray, cp.ndarray]:
         # Sum out broadcasted dims
         while grad.ndim > len(shape):
-            grad = grad.sum(axis=0)
-        for i, (g, s) in enumerate(zip(grad.shape, shape)):
+            grad = grad.sum(axis=0) # after here the shape have the shame ndim 
+        for i, (g, s) in enumerate(zip(grad.shape, shape)): 
             if s == 1 and g != 1:
                 grad = grad.sum(axis=i, keepdims=True)
         return grad
@@ -134,7 +135,6 @@ class Tensor:
                 topo.append(v)
         build(self)
 
-        # Seed gradient
         if self.device == 'cpu':
             self.grad = np.ones_like(self.data)
         else:
