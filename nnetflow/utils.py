@@ -1,18 +1,11 @@
-import numpy as np 
-try:
-    import cupy as cp 
-except Exception as e: 
-    print(f"Cannot improt cupy:: you cant use GPU the error is :: {e}")
-
-
+def is_cuda_available() -> bool:
+import importlib
 
 def is_cuda_available() -> bool:
-    """this function is used to check if there is a gpu """
+    """Check if CUDA is available using the C++/CUDA backend."""
     try:
-        cp.cuda.runtime.getDeviceCount()
-        return True
-    except cp.cuda.runtime.CUDARuntimeError:
-        return False
-    except Exception as e: 
-        print(e)
+        tensor_cuda = importlib.import_module('tensor_cuda')
+        return tensor_cuda.Device.detect_best().type == tensor_cuda.DeviceType.CUDA
+    except Exception as e:
+        print(f"CUDA check failed: {e}")
         return False

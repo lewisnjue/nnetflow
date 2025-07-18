@@ -1,64 +1,73 @@
 import numpy as np
-import cupy as cp 
-
 from typing import Union, List, Literal, Tuple, Optional
-from .utils import is_cuda_available
+import importlib
 
-DEVICE  = 'cuda'  if is_cuda_available() else 'cpu' # i want to use this as the default device
+# Try to import the C++/CUDA backend
+try:
+    tensor_cuda = importlib.import_module('tensor_cuda')
+    _HAS_CUDA_BACKEND = True
+except ImportError:
+    tensor_cuda = None
+    _HAS_CUDA_BACKEND = False
+
+def is_cuda_available():
+    if _HAS_CUDA_BACKEND:
+        try:
+            return tensor_cuda.Device.detect_best().type == tensor_cuda.DeviceType.CUDA
+        except Exception:
+            return False
+    return False
+
+DEVICE = 'cuda' if is_cuda_available() else 'cpu'
+
 class Tensor:
     @staticmethod
     def _noop_backward():
         pass
     def __init__(
         self,
-        data: Union[List[float], List[int], np.ndarray, cp.ndarray,int,float],
+        data: Union[List[float], List[int], np.ndarray, int, float],
         _children: Tuple['Tensor', ...] = (),
         _op: str = '',
         device: str = DEVICE,
         dtype: str = 'float32',
         require_grad: bool = True
     ) -> None:
-        if isinstance(data, (int, float)):
-            data = np.array(data, dtype=dtype) if device == 'cpu' else cp.array(data, dtype=dtype)
-            _children = ()
         self.require_grad = require_grad
-        if not self.require_grad: # dont know if this will break my nnetwork but i will work on that later 
-            assert _children == (), "Children must be empty if require_grad is False"
-            self._children = () 
-            self.grad = None
-        else:
-            self._children = _children
-            self.grad = np.zeros_like(data) if device == 'cpu' else cp.zeros_like(data) # this is diffrent from pytorch 
         self.device = device
         self.dtype = dtype
         self._op = _op
-        self.require_grad = require_grad
-        # Tensor data initialization
-        if self.device == 'cpu':
-            if isinstance(data, list):
-                data = np.array(data, dtype=self.dtype)
+        self._children = _children if require_grad else ()
+        # Use C++/CUDA backend if available
+        if _HAS_CUDA_BACKEND:
+            dev = tensor_cuda.Device(tensor_cuda.DeviceType.CUDA if device == 'cuda' else tensor_cuda.DeviceType.CPU, 0)
+            if isinstance(data, (int, float)):
+                arr = np.array([data], dtype=dtype)
             elif isinstance(data, np.ndarray):
-                data = data.astype(self.dtype)
-            elif np.isscalar(data):
-                data = np.array(data, dtype=self.dtype)
+                arr = data.astype(dtype)
+            elif isinstance(data, list):
+                arr = np.array(data, dtype=dtype)
             else:
-                raise TypeError("Data must be a list or np.ndarray for CPU tensors.")
-            self.data = data
+                raise TypeError("Unsupported data type for Tensor")
+            shape = list(arr.shape)
+            self._tensor = tensor_cuda.CudaTensor(shape, require_grad, dev)
+            self._tensor.from_host(arr.flatten().tolist())
+            self.shape = tuple(shape)
+            self.grad = None # Expose grad if needed
+            self.data = arr # For compatibility
         else:
-            if isinstance(data, list):
-                data = cp.array(data, dtype=self.dtype)
+            # Fallback to numpy
+            if isinstance(data, (int, float)):
+                arr = np.array([data], dtype=dtype)
             elif isinstance(data, np.ndarray):
-                data = cp.asarray(data, dtype=self.dtype)
-            elif isinstance(data, cp.ndarray):
-                data = data.astype(self.dtype)
-            elif cp.isscalar(data):
-                data = cp.array(data, dtype=self.dtype)
+                arr = data.astype(dtype)
+            elif isinstance(data, list):
+                arr = np.array(data, dtype=dtype)
             else:
-                raise TypeError("Data must be a list, np.ndarray, or cp.ndarray for CUDA tensors.")
-            self.data = data
-        self.data: np.ndarray | cp.ndarray = self.data
-        self.grad: np.ndarray | cp.ndarray | None = self.grad
-        self.shape = self.data.shape
+                raise TypeError("Unsupported data type for Tensor")
+            self.data = arr
+            self.shape = arr.shape
+            self.grad = np.zeros_like(arr) if require_grad else None
         self._backward = Tensor._noop_backward
 
     @staticmethod
@@ -154,27 +163,28 @@ class Tensor:
                     cp.clip(v.grad, -grad_clip, grad_clip, out=v.grad)
 
     def to(self, device: Literal['cpu', 'cuda']) -> 'Tensor':
-        data = self.data
-        if device == self.device:
-            return self
-        if device == 'cpu':
-            arr = cp.asnumpy(data) if isinstance(data, cp.ndarray) else data
-            return Tensor(arr, device='cpu', dtype=self.dtype)
+        if _HAS_CUDA_BACKEND:
+            dev = tensor_cuda.Device(tensor_cuda.DeviceType.CUDA if device == 'cuda' else tensor_cuda.DeviceType.CPU, 0)
+            t2 = self._tensor.to(dev.type)
+            arr = np.array(t2.to_host(), dtype=self.dtype).reshape(self.shape)
+            return Tensor(arr, device=device, dtype=self.dtype, require_grad=self.require_grad)
         else:
-            arr = cp.asarray(data) if isinstance(data, np.ndarray) else data
-            return Tensor(arr, device='cuda', dtype=self.dtype)
+            if device == self.device:
+                return self
+            arr = self.data.copy()
+            return Tensor(arr, device=device, dtype=self.dtype, require_grad=self.require_grad)
     
     def cpu(self) -> 'Tensor':
         return self.to('cpu')
-    
+
     def cuda(self) -> 'Tensor':
         return self.to('cuda')
     
     def numpy(self) -> np.ndarray:
-        if self.device == 'cpu':
-            return np.asarray(self.data)
+        if _HAS_CUDA_BACKEND:
+            return np.array(self._tensor.to_host(), dtype=self.dtype).reshape(self.shape)
         else:
-            return cp.asnumpy(self.data)
+            return np.asarray(self.data)
 
     def sum(self, axis: Union[int, Tuple[int, ...], None] = None, keepdims: bool = False) -> 'Tensor':
         out_data = self.data.sum(axis=axis, keepdims=keepdims)
@@ -444,21 +454,26 @@ class Tensor:
         return out
 
     def __matmul__(self, other: 'Tensor') -> 'Tensor':
-        if isinstance(other, Tensor):
-            other_data = other.data
+        if _HAS_CUDA_BACKEND:
+            out_tensor = self._tensor.matmul(other._tensor)
+            arr = np.array(out_tensor.to_host(), dtype=self.dtype).reshape(out_tensor.shape)
+            return Tensor(arr, device=self.device, dtype=self.dtype, require_grad=self.require_grad or other.require_grad)
         else:
-            raise TypeError('Matmul only supported with another Tensor')
-        out = Tensor(self.data @ other_data, (self, other), '@', self.device, self.dtype, require_grad=self.require_grad or other.require_grad)
-        if out.require_grad:
-            def _backward():
-                grad = out.grad
-                # For x @ weight: dL/dx = grad @ weight.T, dL/dweight = x.T @ grad
-                if self.grad is not None and grad is not None:
-                    self.grad += grad @ other_data.T
-                if other.grad is not None and grad is not None:
-                    other.grad += self.data.T @ grad
-            out._backward = _backward
-        return out
+            if isinstance(other, Tensor):
+                other_data = other.data
+            else:
+                raise TypeError('Matmul only supported with another Tensor')
+            out = Tensor(self.data @ other_data, (self, other), '@', self.device, self.dtype, require_grad=self.require_grad or other.require_grad)
+            if out.require_grad:
+                def _backward():
+                    grad = out.grad
+                    # For x @ weight: dL/dx = grad @ weight.T, dL/dweight = x.T @ grad
+                    if self.grad is not None and grad is not None:
+                        self.grad += grad @ other_data.T
+                    if other.grad is not None and grad is not None:
+                        other.grad += self.data.T @ grad
+                out._backward = _backward
+            return out
 
     def __getitem__(self, idx:
         Union[int, slice, Tuple[Union[int, slice, Tuple[int, ...]], ...]]
