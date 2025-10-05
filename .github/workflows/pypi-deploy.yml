@@ -1,11 +1,8 @@
-name: Build and Deploy to PyPI
+name: Build and Deploy to PyPI (Release only)
 
 on:
-  push:
-    branches:
-      - main
-    tags:
-      - '*'
+  release:
+    types: [published]
 
 jobs:
   build:
@@ -51,7 +48,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'release'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -74,10 +71,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install build twine
 
-      - name: Set version from tag
+      - name: Set version from release
         run: |
-          VERSION=${GITHUB_REF#refs/tags/}
-          echo "Using tag version: $VERSION"
+          VERSION=${{ github.event.release.tag_name }}
+          echo "Using release version: $VERSION"
           sed -i "s/^version = .*/version = \"$VERSION\"/" pyproject.toml
           cat pyproject.toml
 
