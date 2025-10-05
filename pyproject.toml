@@ -42,3 +42,6 @@ Homepage = "https://github.com/lewisnjue/nnetflow"
 Documentation = "https://github.com/lewisnjue/nnetflow#readme"
 Source = "https://github.com/lewisnjue/nnetflow"
 Issues = "https://github.com/lewisnjue/nnetflow/issues"
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
