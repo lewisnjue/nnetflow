@@ -8,6 +8,14 @@ A minimal neural network framework with autodiff, inspired by micrograd and pyto
 pip install nnetflow
 ```
 
+### From source
+
+```bash
+git clone https://github.com/lewisnjue/nnetflow.git
+cd nnetflow
+pip install -e .
+```
+
 ```bash
 
 from nnetflow.engine import Tensor
@@ -67,6 +75,8 @@ print("All parameters match successfully after loading the model.")
 ```
 
 
-# ...
+# Documentation
 
-See the docs/ folder for more details.
+- See `docs/index.md` for a full guide and API overview.
+- See `CONTRIBUTING.md` for contribution guidelines.
+- See `CHANGELOG.md` for release notes.
