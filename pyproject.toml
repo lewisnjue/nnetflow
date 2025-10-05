@@ -45,3 +45,4 @@ Issues = "https://github.com/lewisnjue/nnetflow/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
+typecheck = ["mypy>=1.5"]
