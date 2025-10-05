@@ -56,6 +56,15 @@ def _ones_like(arr, device: str = 'cpu'):
     xp = _get_array_module(device)
     return xp.ones_like(arr)
 
+def _randn(shape: Tuple[int, ...], device: str = 'cpu'):
+    """Create random normal array on appropriate device."""
+    if device == 'cpu':
+        return np.random.randn(*shape)
+    else:
+        if not _HAS_CUPY:
+            raise RuntimeError("CuPy not available for CUDA operations")
+        return cp.random.randn(*shape)
+
 class Tensor:
     @staticmethod
     def _noop_backward():
@@ -140,6 +149,64 @@ class Tensor:
                 raise RuntimeError("CuPy not available for CUDA operations")
             data = cp.ones(shape, dtype=dtype)
         return Tensor(data, (), 'ones', device, dtype, require_grad=require_grad)
+    
+    @staticmethod
+    def xavier_uniform(shape: Tuple[int, ...], device: str = DEVICE, dtype: str = 'float32', require_grad: bool = True) -> 'Tensor':
+        """Initialize tensor with Xavier/Glorot uniform distribution."""
+        fan_in = shape[0] if len(shape) > 0 else 1
+        fan_out = shape[1] if len(shape) > 1 else 1
+        limit = np.sqrt(6.0 / (fan_in + fan_out))
+        
+        if device == 'cpu':
+            data = np.random.uniform(-limit, limit, shape).astype(dtype)
+        else:
+            if not _HAS_CUPY:
+                raise RuntimeError("CuPy not available for CUDA operations")
+            data = cp.random.uniform(-limit, limit, shape).astype(dtype)
+        return Tensor(data, (), 'xavier_uniform', device, dtype, require_grad=require_grad)
+    
+    @staticmethod
+    def xavier_normal(shape: Tuple[int, ...], device: str = DEVICE, dtype: str = 'float32', require_grad: bool = True) -> 'Tensor':
+        """Initialize tensor with Xavier/Glorot normal distribution."""
+        fan_in = shape[0] if len(shape) > 0 else 1
+        fan_out = shape[1] if len(shape) > 1 else 1
+        std = np.sqrt(2.0 / (fan_in + fan_out))
+        
+        if device == 'cpu':
+            data = np.random.normal(0.0, std, shape).astype(dtype)
+        else:
+            if not _HAS_CUPY:
+                raise RuntimeError("CuPy not available for CUDA operations")
+            data = cp.random.normal(0.0, std, shape).astype(dtype)
+        return Tensor(data, (), 'xavier_normal', device, dtype, require_grad=require_grad)
+    
+    @staticmethod
+    def he_uniform(shape: Tuple[int, ...], device: str = DEVICE, dtype: str = 'float32', require_grad: bool = True) -> 'Tensor':
+        """Initialize tensor with He uniform distribution (for ReLU)."""
+        fan_in = shape[0] if len(shape) > 0 else 1
+        limit = np.sqrt(6.0 / fan_in)
+        
+        if device == 'cpu':
+            data = np.random.uniform(-limit, limit, shape).astype(dtype)
+        else:
+            if not _HAS_CUPY:
+                raise RuntimeError("CuPy not available for CUDA operations")
+            data = cp.random.uniform(-limit, limit, shape).astype(dtype)
+        return Tensor(data, (), 'he_uniform', device, dtype, require_grad=require_grad)
+    
+    @staticmethod
+    def he_normal(shape: Tuple[int, ...], device: str = DEVICE, dtype: str = 'float32', require_grad: bool = True) -> 'Tensor':
+        """Initialize tensor with He normal distribution (for ReLU)."""
+        fan_in = shape[0] if len(shape) > 0 else 1
+        std = np.sqrt(2.0 / fan_in)
+        
+        if device == 'cpu':
+            data = np.random.normal(0.0, std, shape).astype(dtype)
+        else:
+            if not _HAS_CUPY:
+                raise RuntimeError("CuPy not available for CUDA operations")
+            data = cp.random.normal(0.0, std, shape).astype(dtype)
+        return Tensor(data, (), 'he_normal', device, dtype, require_grad=require_grad)
     
     @property
     def requires_grad(self) -> bool:
@@ -425,6 +492,99 @@ class Tensor:
                     mask = (self.data > 0).astype(self.data.dtype)
                     self.grad += out.grad * mask
             out._backward = _backward
+        return out
+
+    def sigmoid(self) -> 'Tensor':
+        if self.device == 'cpu':
+            out_data = 1.0 / (1.0 + np.exp(-self.data))
+        else:
+            out_data = 1.0 / (1.0 + cp.exp(-self.data))
+        require_grad = self.require_grad
+        children = (self,) if require_grad else ()
+        out = Tensor(out_data, children, 'sigmoid', self.device, self.dtype, require_grad=require_grad)
+        if require_grad:
+            def _backward():
+                if out.grad is not None and self.grad is not None:
+                    grad = out.grad * out.data * (1.0 - out.data)
+                    self.grad += grad
+            out._backward = _backward
+        return out
+
+    def tanh(self) -> 'Tensor':
+        if self.device == 'cpu':
+            out_data = np.tanh(self.data)
+        else:
+            out_data = cp.tanh(self.data)
+        require_grad = self.require_grad
+        children = (self,) if require_grad else ()
+        out = Tensor(out_data, children, 'tanh', self.device, self.dtype, require_grad=require_grad)
+        if require_grad:
+            def _backward():
+                if out.grad is not None and self.grad is not None:
+                    grad = out.grad * (1.0 - out.data**2)
+                    self.grad += grad
+            out._backward = _backward
+        return out
+
+    def leaky_relu(self, alpha: float = 0.01) -> 'Tensor':
+        if self.device == 'cpu':
+            out_data = np.where(self.data > 0, self.data, alpha * self.data)
+        else:
+            out_data = cp.where(self.data > 0, self.data, alpha * self.data)
+        require_grad = self.require_grad
+        children = (self,) if require_grad else ()
+        out = Tensor(out_data, children, 'leaky_relu', self.device, self.dtype, require_grad=require_grad)
+        if require_grad:
+            def _backward():
+                if out.grad is not None and self.grad is not None:
+                    if self.device == 'cpu':
+                        slope = np.where(self.data > 0, 1.0, alpha).astype(self.data.dtype)
+                    else:
+                        slope = cp.where(self.data > 0, 1.0, alpha).astype(self.data.dtype)
+                    self.grad += out.grad * slope
+            out._backward = _backward
+        return out
+
+    def gelu(self, approximate: bool = True) -> 'Tensor':
+        # Gaussian Error Linear Unit
+        if approximate:
+            # tanh approximation (Hendrycks & Gimpel)
+            if self.device == 'cpu':
+                c = np.sqrt(2 / np.pi)
+                out_data = 0.5 * self.data * (1.0 + np.tanh(c * (self.data + 0.044715 * (self.data ** 3))))
+            else:
+                c = np.sqrt(2 / np.pi)
+                out_data = 0.5 * self.data * (1.0 + cp.tanh(c * (self.data + 0.044715 * (self.data ** 3))))
+        else:
+            # exact via erf
+            if self.device == 'cpu':
+                out_data = 0.5 * self.data * (1.0 + (2/np.sqrt(np.pi)) * np.vectorize(lambda v: np.math.erf(v/np.sqrt(2)))(self.data))
+            else:
+                out_data = 0.5 * self.data * (1.0 + (2/np.sqrt(np.pi)) * cp.erf(self.data / np.sqrt(2)))
+        require_grad = self.require_grad
+        children = (self,) if require_grad else ()
+        out = Tensor(out_data, children, 'gelu', self.device, self.dtype, require_grad=require_grad)
+        if require_grad:
+            def _backward():
+                if out.grad is not None and self.grad is not None:
+                    if self.device == 'cpu':
+                        c = np.sqrt(2 / np.pi)
+                        tanh_arg = c * (self.data + 0.044715 * (self.data ** 3))
+                        sech2 = 1.0 / (np.cosh(tanh_arg) ** 2)
+                        dgelu = 0.5 * (1.0 + np.tanh(tanh_arg)) + 0.5 * self.data * sech2 * c * (1 + 3 * 0.044715 * (self.data ** 2))
+                    else:
+                        c = np.sqrt(2 / np.pi)
+                        tanh_arg = c * (self.data + 0.044715 * (self.data ** 3))
+                        sech2 = 1.0 / (cp.cosh(tanh_arg) ** 2)
+                        dgelu = 0.5 * (1.0 + cp.tanh(tanh_arg)) + 0.5 * self.data * sech2 * c * (1 + 3 * 0.044715 * (self.data ** 2))
+                    self.grad += out.grad * dgelu
+            out._backward = _backward
+        return out
+
+    def swish(self) -> 'Tensor':
+        sig = self.sigmoid()
+        out = self * sig
+        # backward is handled via autograd chain (mul + sigmoid)
         return out
 
     def __add__(self, other: 'Tensor') -> 'Tensor':
