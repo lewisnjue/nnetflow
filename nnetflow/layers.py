@@ -47,3 +47,53 @@ class Linear(Module):
     
     def parameters(self) -> list[Tensor]:
         return [self.weight, self.bias]
+
+
+class Dropout(Module):
+    def __init__(self, p: float = 0.5, device: str = 'cpu') -> None:
+        super().__init__()
+        assert 0.0 <= p < 1.0, "Dropout probability must be in [0, 1)"
+        self.p = p
+        self.device = device
+        self._mask = None
+
+    def forward(self, x: Tensor, training: bool = True) -> Tensor:
+        if not training or self.p == 0.0:
+            return x
+        xp = __import__('numpy') if self.device == 'cpu' else __import__('cupy')
+        mask = (xp.random.rand(*x.shape) >= self.p).astype(x.data.dtype) / (1.0 - self.p)
+        self._mask = Tensor(mask, device=self.device, require_grad=False)
+        return x * self._mask
+
+    def parameters(self) -> list[Tensor]:
+        return []
+
+
+class BatchNorm1d(Module):
+    def __init__(self, num_features: int, eps: float = 1e-5, momentum: float = 0.1, device: str = 'cpu') -> None:
+        super().__init__()
+        self.num_features = num_features
+        self.eps = eps
+        self.momentum = momentum
+        self.device = device
+        self.gamma = Tensor.ones((num_features,), device=device)
+        self.beta = Tensor.zeros((num_features,), device=device)
+        self.running_mean = Tensor.zeros((num_features,), device=device, require_grad=False)
+        self.running_var = Tensor.ones((num_features,), device=device, require_grad=False)
+
+    def forward(self, x: Tensor, training: bool = True) -> Tensor:
+        # x shape: (N, C)
+        if training:
+            mean = x.mean(axis=0)
+            var = (x - mean).pow(2).mean(axis=0)
+            # Update running stats (no grad)
+            self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * mean
+            self.running_var = (1 - self.momentum) * self.running_var + self.momentum * var
+        else:
+            mean = self.running_mean
+            var = self.running_var
+        x_hat = (x - mean) / (var + Tensor(self.eps, device=x.device, require_grad=False)).pow(0.5)
+        return self.gamma * x_hat + self.beta
+
+    def parameters(self) -> list[Tensor]:
+        return [self.gamma, self.beta]
