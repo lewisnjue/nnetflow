@@ -2,6 +2,14 @@ import numpy as np
 from typing import Union, List, Literal, Tuple, Optional
 import importlib
 
+# Try to import CuPy for CUDA support
+try:
+    import cupy as cp
+    _HAS_CUPY = True
+except ImportError:
+    cp = None
+    _HAS_CUPY = False
+
 # Try to import the C++/CUDA backend
 try:
     tensor_cuda = importlib.import_module('tensor_cuda')
@@ -11,14 +19,42 @@ except ImportError:
     _HAS_CUDA_BACKEND = False
 
 def is_cuda_available():
+    # First check C++/CUDA backend
     if _HAS_CUDA_BACKEND:
         try:
             return tensor_cuda.Device.detect_best().type == tensor_cuda.DeviceType.CUDA
         except Exception:
-            return False
+            pass
+    # Fallback to CuPy detection
+    if _HAS_CUPY:
+        try:
+            cp.cuda.runtime.getDeviceCount()
+            return True
+        except Exception:
+            pass
     return False
 
 DEVICE = 'cuda' if is_cuda_available() else 'cpu'
+
+# Helper functions for array operations
+def _get_array_module(device: str):
+    """Get the appropriate array module for the device."""
+    if device == 'cpu':
+        return np
+    else:
+        if not _HAS_CUPY:
+            raise RuntimeError("CuPy not available for CUDA operations")
+        return cp
+
+def _zeros_like(arr, device: str = 'cpu'):
+    """Create zeros_like array on appropriate device."""
+    xp = _get_array_module(device)
+    return xp.zeros_like(arr)
+
+def _ones_like(arr, device: str = 'cpu'):
+    """Create ones_like array on appropriate device."""
+    xp = _get_array_module(device)
+    return xp.ones_like(arr)
 
 class Tensor:
     @staticmethod
@@ -63,8 +99,10 @@ class Tensor:
                 arr = data.astype(dtype)
             elif isinstance(data, list):
                 arr = np.array(data, dtype=dtype)
+            elif hasattr(data, 'shape') and hasattr(data, 'dtype'):  # numpy scalar or array-like
+                arr = np.array(data, dtype=dtype)
             else:
-                raise TypeError("Unsupported data type for Tensor")
+                raise TypeError(f"Unsupported data type for Tensor: {type(data)}")
             self.data = arr
             self.shape = arr.shape
             self.grad = np.zeros_like(arr) if require_grad else None
@@ -72,9 +110,9 @@ class Tensor:
 
     @staticmethod
     def _unbroadcast(
-        grad: Union[np.ndarray, cp.ndarray],
+        grad: Union[np.ndarray, 'cp.ndarray'],
         shape: Tuple[int, ...]
-    ) -> Union[np.ndarray, cp.ndarray]:
+    ) -> Union[np.ndarray, 'cp.ndarray']:
         # Sum out broadcasted dims
         while grad.ndim > len(shape):
             grad = grad.sum(axis=0) # after here the shape have the shame ndim 
@@ -88,6 +126,8 @@ class Tensor:
         if device == 'cpu':
             data = np.zeros(shape, dtype=dtype)
         else:
+            if not _HAS_CUPY:
+                raise RuntimeError("CuPy not available for CUDA operations")
             data = cp.zeros(shape, dtype=dtype)
         return Tensor(data, (), 'zeros', device, dtype, require_grad=require_grad)
 
@@ -96,6 +136,8 @@ class Tensor:
         if device == 'cpu':
             data = np.ones(shape, dtype=dtype)
         else:
+            if not _HAS_CUPY:
+                raise RuntimeError("CuPy not available for CUDA operations")
             data = cp.ones(shape, dtype=dtype)
         return Tensor(data, (), 'ones', device, dtype, require_grad=require_grad)
     
@@ -115,6 +157,8 @@ class Tensor:
             if self.device == 'cpu':
                 self.grad = np.zeros_like(self.data)
             else:
+                if not _HAS_CUPY:
+                    raise RuntimeError("CuPy not available for CUDA operations")
                 self.grad = cp.zeros_like(self.data)
         else:
             raise RuntimeError("Cannot zero_grad on a tensor that does not require gradients.")
@@ -147,6 +191,8 @@ class Tensor:
         if self.device == 'cpu':
             self.grad = np.ones_like(self.data)
         else:
+            if not _HAS_CUPY:
+                raise RuntimeError("CuPy not available for CUDA operations")
             self.grad = cp.ones_like(self.data)
 
         # Backprop
@@ -158,6 +204,8 @@ class Tensor:
                 if grad_clip is not None:
                     np.clip(v.grad, -grad_clip, grad_clip, out=v.grad)
             else:
+                if not _HAS_CUPY:
+                    raise RuntimeError("CuPy not available for CUDA operations")
                 v.grad = cp.nan_to_num(v.grad, nan=0.0, posinf=1e5, neginf=-1e5)
                 if grad_clip is not None:
                     cp.clip(v.grad, -grad_clip, grad_clip, out=v.grad)
