@@ -80,3 +80,11 @@ print("All parameters match successfully after loading the model.")
 - See `docs/index.md` for a full guide and API overview.
 - See `CONTRIBUTING.md` for contribution guidelines.
 - See `CHANGELOG.md` for release notes.
+
+## Examples
+
+- PyTorch vs nnetflow simple regression: `examples/pytorch_vs_nnetflow.py`
+- Classification comparison with decision boundaries: `examples/classification_torch_vs_nnetflow.py`
+  - Outputs: `examples/outputs/classification_boundaries.png`, `examples/outputs/classification_losses.png`
+- Regression comparison with fit and loss curves: `examples/regression_torch_vs_nnetflow.py`
+  - Outputs: `examples/outputs/regression_fit_and_loss.png`
