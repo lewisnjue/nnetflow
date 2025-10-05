@@ -2,6 +2,7 @@ from .engine import Tensor
 from typing import List
 
 class SGD:
+    """Stochastic Gradient Descent optimizer with optional momentum."""
     def __init__(self, params: List[Tensor], lr: float = 0.01, momentum: float = 0.0) -> None:
         self.params = params
         self.lr = lr
@@ -9,6 +10,7 @@ class SGD:
         self.velocities = [p.zeros_like() for p in params]
 
     def step(self) -> None:
+        """Apply one optimization step to all parameters."""
         for i, param in enumerate(self.params):
             if param.grad is None:
                 continue
@@ -19,6 +21,7 @@ class SGD:
                 param.data -= self.lr * param.grad
 
     def zero_grad(self) -> None:
+        """Zero gradients for all parameters."""
         for param in self.params:
             if hasattr(param, 'zero_grad'):
                 param.zero_grad()
@@ -30,6 +33,7 @@ class SGD:
 
 
 class Adam:
+    """Adam optimizer."""
     def __init__(self, params: List[Tensor], lr: float = 0.001, beta1: float = 0.9, beta2: float = 0.999, eps: float = 1e-8) -> None:
         self.params = params
         self.lr = lr
@@ -41,6 +45,7 @@ class Adam:
         self.t = 0
 
     def step(self) -> None:
+        """Apply one optimization step to all parameters with bias correction."""
         self.t += 1
         for i, param in enumerate(self.params):
             if param.grad is None:
@@ -52,6 +57,7 @@ class Adam:
             param.data -= self.lr * m_hat / (v_hat ** 0.5 + self.eps)
 
     def zero_grad(self) -> None:
+        """Zero gradients for all parameters."""
         for param in self.params:
             if hasattr(param, 'zero_grad'):
                 param.zero_grad()
