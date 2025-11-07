@@ -1,726 +1,556 @@
 import numpy as np
-from typing import Union, List, Literal, Tuple, Optional
-import importlib
-
-# Try to import CuPy for CUDA support
-try:
-    import cupy as cp
-    _HAS_CUPY = True
-except ImportError:
-    cp = None
-    _HAS_CUPY = False
-
-# Try to import the C++/CUDA backend
-try:
-    tensor_cuda = importlib.import_module('tensor_cuda')
-    _HAS_CUDA_BACKEND = True
-except ImportError:
-    tensor_cuda = None
-    _HAS_CUDA_BACKEND = False
-
-def is_cuda_available():
-    # First check C++/CUDA backend
-    if _HAS_CUDA_BACKEND:
-        try:
-            return tensor_cuda.Device.detect_best().type == tensor_cuda.DeviceType.CUDA
-        except Exception:
-            pass
-    # Fallback to CuPy detection
-    if _HAS_CUPY:
-        try:
-            cp.cuda.runtime.getDeviceCount()
-            return True
-        except Exception:
-            pass
-    return False
-
-DEVICE = 'cuda' if is_cuda_available() else 'cpu'
-
-# Helper functions for array operations
-def _get_array_module(device: str):
-    """Get the appropriate array module for the device."""
-    if device == 'cpu':
-        return np
-    else:
-        if not _HAS_CUPY:
-            raise RuntimeError("CuPy not available for CUDA operations")
-        return cp
-
-def _zeros_like(arr, device: str = 'cpu'):
-    """Create zeros_like array on appropriate device."""
-    xp = _get_array_module(device)
-    return xp.zeros_like(arr)
-
-def _ones_like(arr, device: str = 'cpu'):
-    """Create ones_like array on appropriate device."""
-    xp = _get_array_module(device)
-    return xp.ones_like(arr)
-
-def _randn(shape: Tuple[int, ...], device: str = 'cpu'):
-    """Create random normal array on appropriate device."""
-    if device == 'cpu':
-        return np.random.randn(*shape)
-    else:
-        if not _HAS_CUPY:
-            raise RuntimeError("CuPy not available for CUDA operations")
-        return cp.random.randn(*shape)
+from typing import Union, List, Literal, Tuple, Optional, Set
+import scipy.special as sp 
 
 class Tensor:
-    @staticmethod
-    def _noop_backward():
-        pass
-    def __init__(
-        self,
-        data: Union[List[float], List[int], np.ndarray, int, float],
-        _children: Tuple['Tensor', ...] = (),
-        _op: str = '',
-        device: str = DEVICE,
-        dtype: str = 'float32',
-        require_grad: bool = True
-    ) -> None:
-        self.require_grad = require_grad
-        self.device = device
-        self.dtype = dtype
+    """
+    A simple autograd Tensor class supporting dynamic computation graphs
+    and backpropagation.
+    """
+    def __init__(self, 
+                 data: Union[np.ndarray, float, int, list, tuple], 
+                 _children: Tuple['Tensor', ...] = (), 
+                 _op: str = '', 
+                 requires_grad: Optional[bool] = None) -> None:
+        
+        if not isinstance(data, np.ndarray):
+            # If it's not an array (e.g., list, tuple, float, int), try to convert it.
+            try:
+                data = np.array(data, dtype=np.float64)
+            except Exception as e:
+                # This will catch truly weird inputs (like dicts)
+                raise TypeError(f"Could not convert data of type {type(data)} to np.ndarray. Error: {e}")
+        
+        # Now we know 'data' is an ndarray.
+        # We must ensure it's a float type for gradients.
+        if not np.issubdtype(data.dtype, np.floating):
+            # print(f"Warning: Converting non-float ndarray ({data.dtype}) to float64.")
+            data = data.astype(np.float64)
+        
+        self.data = data
+        self.shape = self.data.shape
         self._op = _op
-        self._children = _children if require_grad else ()
-        # Use C++/CUDA backend if available
-        if _HAS_CUDA_BACKEND:
-            dev = tensor_cuda.Device(tensor_cuda.DeviceType.CUDA if device == 'cuda' else tensor_cuda.DeviceType.CPU, 0)
-            if isinstance(data, (int, float)):
-                arr = np.array([data], dtype=dtype)
-            elif isinstance(data, np.ndarray):
-                arr = data.astype(dtype)
-            elif isinstance(data, list):
-                arr = np.array(data, dtype=dtype)
-            else:
-                raise TypeError("Unsupported data type for Tensor")
-            shape = list(arr.shape)
-            self._tensor = tensor_cuda.CudaTensor(shape, require_grad, dev)
-            self._tensor.from_host(arr.flatten().tolist())
-            self.shape = tuple(shape)
-            self.grad = None # Expose grad if needed
-            self.data = arr # For compatibility
-        else:
-            # Fallback to numpy
-            if isinstance(data, (int, float)):
-                arr = np.array([data], dtype=dtype)
-            elif isinstance(data, np.ndarray):
-                arr = data.astype(dtype)
-            elif isinstance(data, list):
-                arr = np.array(data, dtype=dtype)
-            elif hasattr(data, 'shape') and hasattr(data, 'dtype'):  # numpy scalar or array-like
-                arr = np.array(data, dtype=dtype)
-            else:
-                raise TypeError(f"Unsupported data type for Tensor: {type(data)}")
-            self.data = arr
-            self.shape = arr.shape
-            self.grad = np.zeros_like(arr) if require_grad else None
-        self._backward = Tensor._noop_backward
+        self._prev: Set['Tensor'] = set(c for c in _children if isinstance(c, Tensor))
 
-    @staticmethod
-    def _unbroadcast(
-        grad: Union[np.ndarray, 'cp.ndarray'],
-        shape: Tuple[int, ...]
-    ) -> Union[np.ndarray, 'cp.ndarray']:
-        # Sum out broadcasted dims
-        while grad.ndim > len(shape):
-            grad = grad.sum(axis=0) # after here the shape have the shame ndim 
-        for i, (g, s) in enumerate(zip(grad.shape, shape)): 
-            if s == 1 and g != 1:
-                grad = grad.sum(axis=i, keepdims=True)
+        # --- Grad Propagation Logic ---
+        if requires_grad is None:
+            # Infer: True if ANY child requires_grad
+            self.requires_grad = any(c.requires_grad for c in self._prev)
+        else:
+            # Explicitly set (for leaf nodes)
+            self.requires_grad = bool(requires_grad)
+
+        # Initialize grad only if needed
+        self.grad: Optional[np.ndarray] = np.zeros_like(self.data) if self.requires_grad else None
+        
+        # This function will be populated by the op that creates this Tensor
+        self._backward = lambda: None
+
+    @classmethod  
+    def unbroadcast(cls, grad: np.ndarray, shape: Tuple[int, ...]) -> np.ndarray:
+        """
+        Sums a gradient to match the original shape before a broadcasting operation.
+        
+        Args:
+            grad: The incoming gradient (with the broadcasted shape).
+            shape: The target shape (the original tensor's shape).
+            
+        Returns:
+            The unbroadcasted gradient.
+        """
+        # 1. Sum away extra dimensions added by broadcasting
+        while len(grad.shape) > len(shape):
+            grad = grad.sum(axis=0)  
+            
+        # 2. Sum along dimensions that were broadcasted (size 1)
+        for i, (grad_dim, shape_dim) in enumerate(zip(grad.shape, shape)):
+            if grad_dim != shape_dim:
+                if shape_dim == 1:
+                    grad = grad.sum(axis=i, keepdims=True)
+                else:
+                    # This should not happen if broadcasting was valid
+                    raise ValueError(f"Cannot unbroadcast shape {grad.shape} to {shape}")
         return grad
 
-    @staticmethod
-    def zeros(shape: Tuple[int, ...], device: str = DEVICE, dtype: str = 'float32', require_grad: bool = True) -> 'Tensor':
-        if device == 'cpu':
-            data = np.zeros(shape, dtype=dtype)
-        else:
-            if not _HAS_CUPY:
-                raise RuntimeError("CuPy not available for CUDA operations")
-            data = cp.zeros(shape, dtype=dtype)
-        return Tensor(data, (), 'zeros', device, dtype, require_grad=require_grad)
-
-    @staticmethod
-    def ones(shape: Tuple[int, ...], device: str = DEVICE, dtype: str = 'float32', require_grad: bool = True) -> 'Tensor':
-        if device == 'cpu':
-            data = np.ones(shape, dtype=dtype)
-        else:
-            if not _HAS_CUPY:
-                raise RuntimeError("CuPy not available for CUDA operations")
-            data = cp.ones(shape, dtype=dtype)
-        return Tensor(data, (), 'ones', device, dtype, require_grad=require_grad)
-    
-    @staticmethod
-    def xavier_uniform(shape: Tuple[int, ...], device: str = DEVICE, dtype: str = 'float32', require_grad: bool = True) -> 'Tensor':
-        """Initialize tensor with Xavier/Glorot uniform distribution."""
-        fan_in = shape[0] if len(shape) > 0 else 1
-        fan_out = shape[1] if len(shape) > 1 else 1
-        limit = np.sqrt(6.0 / (fan_in + fan_out))
+    def __repr__(self) -> str:
+        # Truncate data for cleaner printing
+        data_str = np.array2string(self.data, max_line_width=70, precision=4, suppress_small=True)
+        if '\n' in data_str:
+            data_str = data_str.split('\n')[0] + '...]' # Show first line only if multi-line
         
-        if device == 'cpu':
-            data = np.random.uniform(-limit, limit, shape).astype(dtype)
-        else:
-            if not _HAS_CUPY:
-                raise RuntimeError("CuPy not available for CUDA operations")
-            data = cp.random.uniform(-limit, limit, shape).astype(dtype)
-        return Tensor(data, (), 'xavier_uniform', device, dtype, require_grad=require_grad)
-    
-    @staticmethod
-    def xavier_normal(shape: Tuple[int, ...], device: str = DEVICE, dtype: str = 'float32', require_grad: bool = True) -> 'Tensor':
-        """Initialize tensor with Xavier/Glorot normal distribution."""
-        fan_in = shape[0] if len(shape) > 0 else 1
-        fan_out = shape[1] if len(shape) > 1 else 1
-        std = np.sqrt(2.0 / (fan_in + fan_out))
-        
-        if device == 'cpu':
-            data = np.random.normal(0.0, std, shape).astype(dtype)
-        else:
-            if not _HAS_CUPY:
-                raise RuntimeError("CuPy not available for CUDA operations")
-            data = cp.random.normal(0.0, std, shape).astype(dtype)
-        return Tensor(data, (), 'xavier_normal', device, dtype, require_grad=require_grad)
-    
-    @staticmethod
-    def he_uniform(shape: Tuple[int, ...], device: str = DEVICE, dtype: str = 'float32', require_grad: bool = True) -> 'Tensor':
-        """Initialize tensor with He uniform distribution (for ReLU)."""
-        fan_in = shape[0] if len(shape) > 0 else 1
-        limit = np.sqrt(6.0 / fan_in)
-        
-        if device == 'cpu':
-            data = np.random.uniform(-limit, limit, shape).astype(dtype)
-        else:
-            if not _HAS_CUPY:
-                raise RuntimeError("CuPy not available for CUDA operations")
-            data = cp.random.uniform(-limit, limit, shape).astype(dtype)
-        return Tensor(data, (), 'he_uniform', device, dtype, require_grad=require_grad)
-    
-    @staticmethod
-    def he_normal(shape: Tuple[int, ...], device: str = DEVICE, dtype: str = 'float32', require_grad: bool = True) -> 'Tensor':
-        """Initialize tensor with He normal distribution (for ReLU)."""
-        fan_in = shape[0] if len(shape) > 0 else 1
-        std = np.sqrt(2.0 / fan_in)
-        
-        if device == 'cpu':
-            data = np.random.normal(0.0, std, shape).astype(dtype)
-        else:
-            if not _HAS_CUPY:
-                raise RuntimeError("CuPy not available for CUDA operations")
-            data = cp.random.normal(0.0, std, shape).astype(dtype)
-        return Tensor(data, (), 'he_normal', device, dtype, require_grad=require_grad)
-    
-    @property
-    def requires_grad(self) -> bool:
-        return self.require_grad
-    
-    @requires_grad.setter
-    def requires_grad(self, value: bool) -> None:
-        if not value:
-            self.grad = None
-            self._children = ()
-        self.require_grad = value
+        grad_info = ", grad_fn" if self._op else "" # Simplified grad_fn indicator
+        return f"Tensor(data={data_str}, shape={self.shape}, requires_grad={self.requires_grad}{grad_info})"
 
     def zero_grad(self) -> None:
-        if self.require_grad:
-            if self.device == 'cpu':
-                self.grad = np.zeros_like(self.data)
-            else:
-                if not _HAS_CUPY:
-                    raise RuntimeError("CuPy not available for CUDA operations")
-                self.grad = cp.zeros_like(self.data)
-        else:
-            raise RuntimeError("Cannot zero_grad on a tensor that does not require gradients.")
+        """Resets the gradient of this tensor to zero."""
+        if self.requires_grad:
+            self.grad = np.zeros_like(self.data)
+
+    # --- Factory Methods ---
+    
+    @classmethod  
+    def zeros(cls, *shape: int, requires_grad: bool = False) -> 'Tensor':
+        return cls(np.zeros(shape), requires_grad=requires_grad)
+
+    @classmethod
+    def ones(cls, *shape: int, requires_grad: bool = False) -> 'Tensor':
+        return cls(np.ones(shape), requires_grad=requires_grad)
+
+    @classmethod  
+    def randn(cls, *shape: int, requires_grad: bool = False) -> 'Tensor':
+        # Ensure float64 for better precision in grads
+        data = np.random.randn(*shape).astype(np.float64) 
+        return cls(data, requires_grad=requires_grad)
+
+    @classmethod  
+    def zeros_like(cls, tensor: 'Tensor', requires_grad: Optional[bool] = None) -> 'Tensor':
+        if requires_grad is None:
+            requires_grad = tensor.requires_grad
+        return cls(np.zeros_like(tensor.data), requires_grad=requires_grad)
+
+    @classmethod
+    def ones_like(cls, tensor: 'Tensor', requires_grad: Optional[bool] = None) -> 'Tensor':
+        if requires_grad is None:
+            requires_grad = tensor.requires_grad
+        return cls(np.ones_like(tensor.data), requires_grad=requires_grad)
+
+    # --- Basic Arithmetic Ops ---
+
+    def __add__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':
+        other_val = other.data if isinstance(other, Tensor) else other
+        children = (self, other) if isinstance(other, Tensor) else (self,)
         
-    @property
-    def T(self) -> 'Tensor':
-        out_data = self.data.T
-        require_grad = self.require_grad
-        children = (self,) if require_grad else ()
-        out = Tensor(out_data, children, 'transpose', self.device, self.dtype, require_grad=require_grad)
-        if require_grad:
-            def _backward():
-                if out.grad is not None and self.grad is not None:
-                    self.grad += out.grad.T
-            out._backward = _backward
-        return out
-    
-
-    def backward(self, grad_clip: Optional[float] = None) -> None:
-        topo, visited = [], set()
-
-        def build(v: 'Tensor'):
-            if v not in visited:
-                visited.add(v)
-                for child in v._children:
-                    build(child)
-                topo.append(v)
-        build(self)
-
-        if self.device == 'cpu':
-            self.grad = np.ones_like(self.data)
-        else:
-            if not _HAS_CUPY:
-                raise RuntimeError("CuPy not available for CUDA operations")
-            self.grad = cp.ones_like(self.data)
-
-        # Backprop
-        for v in reversed(topo):
-            v._backward()
-            # Safe-guard
-            if v.device == 'cpu':
-                v.grad = np.nan_to_num(v.grad, nan=0.0, posinf=1e5, neginf=-1e5)
-                if grad_clip is not None:
-                    np.clip(v.grad, -grad_clip, grad_clip, out=v.grad)
-            else:
-                if not _HAS_CUPY:
-                    raise RuntimeError("CuPy not available for CUDA operations")
-                v.grad = cp.nan_to_num(v.grad, nan=0.0, posinf=1e5, neginf=-1e5)
-                if grad_clip is not None:
-                    cp.clip(v.grad, -grad_clip, grad_clip, out=v.grad)
-
-    def to(self, device: Literal['cpu', 'cuda']) -> 'Tensor':
-        if _HAS_CUDA_BACKEND:
-            dev = tensor_cuda.Device(tensor_cuda.DeviceType.CUDA if device == 'cuda' else tensor_cuda.DeviceType.CPU, 0)
-            t2 = self._tensor.to(dev.type)
-            arr = np.array(t2.to_host(), dtype=self.dtype).reshape(self.shape)
-            return Tensor(arr, device=device, dtype=self.dtype, require_grad=self.require_grad)
-        else:
-            if device == self.device:
-                return self
-            arr = self.data.copy()
-            return Tensor(arr, device=device, dtype=self.dtype, require_grad=self.require_grad)
-    
-    def cpu(self) -> 'Tensor':
-        return self.to('cpu')
-
-    def cuda(self) -> 'Tensor':
-        return self.to('cuda')
-    
-    def numpy(self) -> np.ndarray:
-        if _HAS_CUDA_BACKEND:
-            return np.array(self._tensor.to_host(), dtype=self.dtype).reshape(self.shape)
-        else:
-            return np.asarray(self.data)
-
-    def sum(self, axis: Union[int, Tuple[int, ...], None] = None, keepdims: bool = False) -> 'Tensor':
-        out_data = self.data.sum(axis=axis, keepdims=keepdims)
-        out = Tensor(out_data, (self,) if self.require_grad else (), 'sum', self.device, self.dtype, require_grad=self.require_grad)
-        n = int(np.prod(self.shape)) if axis is None else int(np.prod([self.shape[i] for i in (axis if isinstance(axis, tuple) else (axis,))]))
-        if self.require_grad:
-            def _backward():
-                if out.grad is not None:
-                    grad = out.grad / n
-                    if axis is None:
-                        grad = (np.ones_like(self.data) if self.device=='cpu' else cp.ones_like(self.data)) * grad
-                    else:
-                        if not keepdims:
-                            shape_bd = list(self.shape)
-                            for ax in (axis if isinstance(axis, tuple) else (axis,)):
-                                shape_bd[ax] = 1
-                            grad = grad.reshape(shape_bd)
-                        grad = (np.broadcast_to if self.device=='cpu' else cp.broadcast_to)(grad, self.shape)
-                    if self.grad is not None:
-                        self.grad += grad
-            out._backward = _backward
-        return out
-
-    def mean(self, axis: Union[int, Tuple[int, ...], None] = None, keepdims: bool = False) -> 'Tensor':
-        out_data = self.data.mean(axis=axis, keepdims=keepdims)
-        out = Tensor(out_data, (self,) if self.require_grad else (), 'mean', self.device, self.dtype, require_grad=self.require_grad)
+        out = Tensor(self.data + other_val, children, '+')
         
-        n = int(np.prod(self.shape)) if axis is None else int(np.prod([self.shape[i] for i in (axis if isinstance(axis, tuple) else (axis,))]))
-        if self.require_grad:
-            def _backward():
-                if out.grad is not None:
-                    grad = out.grad / n
-                    if axis is None:
-                        grad = (np.ones_like(self.data) if self.device=='cpu' else cp.ones_like(self.data)) * grad
+        def _backward():
+            if self.requires_grad:
+                self.grad += Tensor.unbroadcast(out.grad, self.data.shape)
+            if isinstance(other, Tensor) and other.requires_grad:
+                other.grad += Tensor.unbroadcast(out.grad, other.data.shape)
+        
+        if out.requires_grad:
+            out._backward = _backward
+        return out
+
+    def __mul__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':
+        other_val = other.data if isinstance(other, Tensor) else other
+        children = (self, other) if isinstance(other, Tensor) else (self,)
+        
+        out = Tensor(self.data * other_val, children, '*')
+        
+        def _backward():
+            if self.requires_grad:
+                self.grad += Tensor.unbroadcast((other_val * out.grad), self.data.shape)
+            if isinstance(other, Tensor) and other.requires_grad:
+                other.grad += Tensor.unbroadcast((self.data * out.grad), other.data.shape)
+                
+        if out.requires_grad:
+            out._backward = _backward
+        return out
+
+    def __pow__(self, other: Union[float, int]) -> 'Tensor':
+        assert isinstance(other, (float, int)), "Only support float and int power for Tensor"
+        out = Tensor(self.data ** other, (self,), f'**{other}') 
+        
+        def _backward():
+            if self.requires_grad:
+                self.grad += (other * (self.data ** (other - 1))) * out.grad
+        
+        if out.requires_grad:
+            out._backward = _backward
+        return out
+
+    def __truediv__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':
+        other_val = other.data if isinstance(other, Tensor) else other
+        children = (self, other) if isinstance(other, Tensor) else (self,)
+        
+        # Note: We don't add epsilon here; user is responsible for 0-division.
+        # Stability is added in log/sigmoid/softmax where it's unambiguous.
+        out = Tensor(self.data / other_val, children, '/')
+        
+        def _backward():
+            # Add epsilon to grad calculation to avoid 1/0
+            other_val_safe = other_val + 1e-8
+            if self.requires_grad:
+                self.grad += Tensor.unbroadcast((1 / other_val_safe) * out.grad, self.data.shape)
+            if isinstance(other, Tensor) and other.requires_grad:
+                self.grad += Tensor.unbroadcast((-self.data / (other_val_safe ** 2)) * out.grad, other.data.shape)
+                
+        if out.requires_grad:
+            out._backward = _backward
+        return out
+
+    def __neg__(self) -> 'Tensor':
+        return self * -1
+
+    def __sub__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':
+        return self + (other * -1)
+
+    # Reflected ops (for `5 + tensor`, etc.)
+    def __radd__(self, other: Union[float, int, np.ndarray]) -> 'Tensor':
+        return self + other
+
+    def __rmul__(self, other: Union[float, int, np.ndarray]) -> 'Tensor':
+        return self * other
+
+    def __rsub__(self, other: Union[float, int, np.ndarray]) -> 'Tensor':
+        return (self * -1) + other
+
+    def __rtruediv__(self, other: Union[float, int, np.ndarray]) -> 'Tensor':
+        return other * (self ** -1)
+
+    # --- Matrix/Reduction Ops ---
+
+    def __matmul__(self, other: 'Tensor') -> 'Tensor':
+        assert isinstance(other, Tensor), "Only support Tensor type for matmul operation"
+        out = Tensor(self.data @ other.data, (self, other), '@')
+        
+        def _backward():
+            if self.requires_grad:
+                # (dL/dC) @ B^T
+                other_transposed = np.swapaxes(other.data, -1, -2)
+                self_grad_contrib = out.grad @ other_transposed
+                self.grad += Tensor.unbroadcast(self_grad_contrib, self.data.shape)
+            
+            if other.requires_grad:
+                # A^T @ (dL/dC)
+                self_transposed = np.swapaxes(self.data, -1, -2)
+                other_grad_contrib = self_transposed @ out.grad
+                other.grad += Tensor.unbroadcast(other_grad_contrib, other.data.shape)
+        
+        if out.requires_grad:
+            out._backward = _backward
+        return out
+
+    def sum(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims: bool = False) -> 'Tensor':
+        out_data = np.sum(self.data, axis=axis, keepdims=keepdims)
+        out = Tensor(out_data, (self,), 'sum')
+        
+        def _backward():
+            if self.requires_grad:
+                # The gradient needs to be broadcasted back to the original shape
+                if axis is None:
+                    # Scalar sum, grad is repeated across all elements
+                    grad_expanded = np.ones_like(self.data) * out.grad
+                else:
+                    # Sum along axis, grad is repeated along that axis
+                    # We can use np.ones * expanded_grad for a general solution
+                    if keepdims:
+                        grad_to_expand = out.grad
                     else:
-                        if not keepdims:
-                            shape_bd = list(self.shape)
-                            for ax in (axis if isinstance(axis, tuple) else (axis,)):
-                                shape_bd[ax] = 1
-                            grad = grad.reshape(shape_bd)
-                        grad = (np.broadcast_to if self.device=='cpu' else cp.broadcast_to)(grad, self.shape)
-                    if self.grad is not None:
-                        self.grad += grad
+                        grad_to_expand = np.expand_dims(out.grad, axis=axis)
+                    
+                    grad_expanded = np.ones_like(self.data) * grad_to_expand
+                
+                self.grad += grad_expanded
+        
+        if out.requires_grad:
             out._backward = _backward
         return out
 
+    def mean(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims: bool = False) -> 'Tensor':
+        # Determine the number of elements being averaged over
+        if axis is None:
+            n = self.data.size
+        elif isinstance(axis, int):
+            n = self.data.shape[axis]
+        else: # axis is a tuple
+            n = np.prod([self.data.shape[i] for i in axis])
+        
+        # Implement mean as sum * (1/n) so (1/n) is part of the graph
+        sum_out = self.sum(axis=axis, keepdims=keepdims)
+        out = sum_out * (1.0 / n) # This creates a Mul node
+        out._op = 'mean' # Override op label
+        return out
+        
+    # --- Unary Ops (Activations, etc.) ---
 
-    def var(self, axis: Union[int, Tuple[int, ...], None] = None, keepdims: bool = False) -> 'Tensor':
-        out_data = self.data.var(axis=axis, keepdims=keepdims)
-        out = Tensor(out_data, (self,) if self.require_grad else (), 'var', self.device, self.dtype, require_grad=self.require_grad)
-        if self.require_grad:
-            def _backward():
-                if out.grad is not None and self.grad is not None:
-                    mu = self.data.mean(axis=axis, keepdims=True)
-                    n = int(np.prod(self.shape)) if axis is None else int(np.prod([self.shape[i] for i in (axis if isinstance(axis, tuple) else (axis,))]))
-                    diff = self.data - mu
-                    grad = out.grad * (2.0 / n) * diff
-                    if not keepdims:
-                        grad = (np.broadcast_to if self.device=='cpu' else cp.broadcast_to)(grad, self.shape)
-                    self.grad += grad
-            out._backward = _backward
-        return out
-
-    def std(self, axis: Union[int, Tuple[int, ...], None] = None, keepdims: bool = False) -> 'Tensor':
-        out_data = self.data.std(axis=axis, keepdims=keepdims)
-        out = Tensor(out_data, (self,) if self.require_grad else (), 'std', self.device, self.dtype, require_grad=self.require_grad)
-        if self.require_grad:
-            def _backward():
-                if out.grad is not None and self.grad is not None:
-                    mu = self.data.mean(axis=axis, keepdims=True)
-                    stdv = out.data
-                    n = int(np.prod(self.shape)) if axis is None else int(np.prod([self.shape[i] for i in (axis if isinstance(axis, tuple) else (axis,))]))
-                    diff = self.data - mu
-                    grad = out.grad * diff / (n * stdv + 1e-8)
-                    if not keepdims:
-                        grad = (np.broadcast_to if self.device=='cpu' else cp.broadcast_to)(grad, self.shape)
-                    self.grad += grad
-            out._backward = _backward
-        return out
-    
-    def softmax(self, axis: int = -1) -> 'Tensor':
-        if self.device == 'cpu':
-            max_val = np.max(self.data, axis=axis, keepdims=True)
-            exp_data = np.exp(self.data - max_val)
-            out_data = exp_data / np.sum(exp_data, axis=axis, keepdims=True)
-        else:
-            max_val = cp.max(self.data, axis=axis, keepdims=True)
-            exp_data = cp.exp(self.data - max_val)
-            out_data = exp_data / cp.sum(exp_data, axis=axis, keepdims=True)
-        require_grad = self.require_grad
-        children = (self,) if require_grad else ()
-        out = Tensor(out_data, children, 'softmax', self.device, self.dtype, require_grad=require_grad)
-        if require_grad:
-            def _backward():
-                if out.grad is not None and self.grad is not None:
-                    # Compute the gradient of softmax
-                    grad = out.grad * out.data * (1 - out.data)
-                    if axis != -1:
-                        grad = np.moveaxis(grad, -1, axis) if self.device == 'cpu' else cp.moveaxis(grad, -1, axis)
-                    self.grad += grad.sum(axis=axis, keepdims=True)
-            out._backward = _backward
-        return out
-    
-    def log(self) -> 'Tensor':
-        if self.device == 'cpu':
-            out_data = np.log(self.data)
-        else:
-            out_data = cp.log(self.data)
-        require_grad = self.require_grad
-        children = (self,) if require_grad else ()
-        out = Tensor(out_data, children, 'log', self.device, self.dtype, require_grad=require_grad)
-        if require_grad:
-            def _backward():
-                if out.grad is not None and self.grad is not None:
-                    self.grad += out.grad / self.data
-            out._backward = _backward
-        return out
-    
-    def abs(self) -> 'Tensor':
-        if self.device == 'cpu':
-            out_data = np.abs(self.data)
-        else:
-            out_data = cp.abs(self.data)
-        require_grad = self.require_grad
-        children = (self,) if require_grad else ()
-        out = Tensor(out_data, children, 'abs', self.device, self.dtype, require_grad=require_grad)
-        if require_grad:
-            def _backward():
-                if out.grad is not None and self.grad is not None:
-                    self.grad += out.grad * np.sign(self.data) if self.device == 'cpu' else cp.sign(self.data)
-            out._backward = _backward
-        return out
-    
-    def zeros_like(self) -> 'Tensor':
-        if self.device == 'cpu':
-            out_data = np.zeros_like(self.data, dtype=self.dtype)
-        else:
-            out_data = cp.zeros_like(self.data, dtype=self.dtype)
-        require_grad = self.require_grad
-        children = (self,) if require_grad else ()
-        out = Tensor(out_data, children, 'zeros_like', self.device, self.dtype, require_grad=require_grad)
-        if require_grad:
-            def _backward():
-                if out.grad is not None and self.grad is not None:
-                    self.grad += out.grad
-            out._backward = _backward
-        return out
-
-    def ones_like(self) -> 'Tensor':
-        if self.device == 'cpu':
-            out_data = np.ones_like(self.data, dtype=self.dtype)
-        else:
-            out_data = cp.ones_like(self.data, dtype=self.dtype)
-        require_grad = self.require_grad
-        children = (self,) if require_grad else ()
-        out = Tensor(out_data, children, 'ones_like', self.device, self.dtype, require_grad=require_grad)
-        if require_grad:
-            def _backward():
-                if out.grad is not None and self.grad is not None:
-                    self.grad += out.grad
-            out._backward = _backward
-        return out
-    
     def exp(self) -> 'Tensor':
-        if self.device == 'cpu':
-            out_data = np.exp(self.data)
-        else:
-            out_data = cp.exp(self.data)
-        require_grad = self.require_grad
-        children = (self,) if require_grad else ()
-        out = Tensor(out_data, children, 'exp', self.device, self.dtype, require_grad=require_grad)
-        if require_grad:
-            def _backward():
-                if out.grad is not None and self.grad is not None:
-                    self.grad += out.grad * out.data
+        out_data = np.exp(self.data)
+        out = Tensor(out_data, (self,), 'exp') 
+        
+        def _backward():
+            if self.requires_grad:
+                self.grad += out.data * out.grad
+        
+        if out.requires_grad:
             out._backward = _backward
         return out
+
+    def log(self) -> 'Tensor':
+        """Natural logarithm (ln)"""
+        if not np.all(self.data > 0):
+            print("Warning: log applied to non-positive elements.")
+        
+        out = Tensor(np.log(self.data), (self,), 'ln') 
+        
+        def _backward():
+            if self.requires_grad:
+                # Add epsilon for numerical stability in gradient
+                self.grad += (1 / (self.data + 1e-8)) * out.grad 
+        
+        if out.requires_grad:
+            out._backward = _backward
+        return out
+
+    def log10(self) -> 'Tensor':
+        """Base-10 logarithm"""
+        if not np.all(self.data > 0):
+            print("Warning: log10 applied to non-positive elements.")
+        
+        out = Tensor(np.log10(self.data), (self,), 'log10') 
+        
+        def _backward():
+            if self.requires_grad:
+                # Add epsilon for numerical stability in gradient
+                self.grad += (1 / ((self.data + 1e-8) * np.log(10))) * out.grad
+        
+        if out.requires_grad:
+            out._backward = _backward
+        return out
+
+    # --- Activation Functions ---
 
     def relu(self) -> 'Tensor':
-        if self.device == 'cpu':
-            out_data = np.maximum(self.data, 0)
-        else:
-            out_data = cp.maximum(self.data, 0)
-        require_grad = self.require_grad
-        children = (self,) if require_grad else ()
-        out = Tensor(out_data, children, 'relu', self.device, self.dtype, require_grad=require_grad)
-        if require_grad:
-            def _backward():
-                if out.grad is not None and self.grad is not None:
-                    mask = (self.data > 0).astype(self.data.dtype)
-                    self.grad += out.grad * mask
+        out = Tensor(np.maximum(self.data, 0), (self,), 'relu')
+        
+        def _backward():
+            if self.requires_grad:
+                self.grad += (self.data > 0) * out.grad
+        
+        if out.requires_grad:
+            out._backward = _backward
+        return out
+
+    def leaky_relu(self, alpha: float = 0.01) -> 'Tensor': 
+        out = Tensor(np.where(self.data > 0, self.data, alpha * self.data), (self,), 'leaky_relu')
+        
+        def _backward():
+            if self.requires_grad:
+                self.grad += np.where(self.data > 0, 1, alpha) * out.grad
+        
+        if out.requires_grad:
+            out._backward = _backward
+        return out
+
+    def elu(self, alpha: float = 1.0) -> 'Tensor':
+        out = Tensor(np.where(self.data > 0, self.data, alpha * (np.exp(self.data) - 1)), (self,), 'elu')
+        
+        def _backward():
+            if self.requires_grad:
+                # d/dx(alpha * (exp(x) - 1)) = alpha * exp(x)
+                self.grad += np.where(self.data > 0, 1, alpha * np.exp(self.data)) * out.grad
+        
+        if out.requires_grad:
+            out._backward = _backward
+        return out
+
+    def selu(self, alpha: float = 1.67326, scale: float = 1.0507) -> 'Tensor': # Renamed beta to scale
+        out = Tensor(scale * np.where(self.data > 0, self.data, alpha * (np.exp(self.data) - 1)), (self,), 'selu')
+        
+        def _backward():
+            if self.requires_grad:
+                self.grad += scale * np.where(self.data > 0, 1, alpha * np.exp(self.data)) * out.grad
+        
+        if out.requires_grad:
+            out._backward = _backward
+        return out
+
+    def gelu(self) -> 'Tensor':
+        # Using the scipy.special.erf implementation
+        out_data = 0.5 * self.data * (1 + sp.erf(self.data / np.sqrt(2)))
+        out = Tensor(out_data, (self,), 'gelu')
+        
+        def _backward():
+            if self.requires_grad:
+                sqrt_2pi = np.sqrt(2 * np.pi)
+                cdf = 0.5 * (1 + sp.erf(self.data / np.sqrt(2)))
+                pdf = (1 / sqrt_2pi) * np.exp(-0.5 * self.data ** 2)
+                self.grad += (cdf + self.data * pdf) * out.grad
+        
+        if out.requires_grad:
             out._backward = _backward
         return out
 
     def sigmoid(self) -> 'Tensor':
-        if self.device == 'cpu':
-            out_data = 1.0 / (1.0 + np.exp(-self.data))
-        else:
-            out_data = 1.0 / (1.0 + cp.exp(-self.data))
-        require_grad = self.require_grad
-        children = (self,) if require_grad else ()
-        out = Tensor(out_data, children, 'sigmoid', self.device, self.dtype, require_grad=require_grad)
-        if require_grad:
-            def _backward():
-                if out.grad is not None and self.grad is not None:
-                    grad = out.grad * out.data * (1.0 - out.data)
-                    self.grad += grad
-            out._backward = _backward
-        return out
-
-    def tanh(self) -> 'Tensor':
-        if self.device == 'cpu':
-            out_data = np.tanh(self.data)
-        else:
-            out_data = cp.tanh(self.data)
-        require_grad = self.require_grad
-        children = (self,) if require_grad else ()
-        out = Tensor(out_data, children, 'tanh', self.device, self.dtype, require_grad=require_grad)
-        if require_grad:
-            def _backward():
-                if out.grad is not None and self.grad is not None:
-                    grad = out.grad * (1.0 - out.data**2)
-                    self.grad += grad
-            out._backward = _backward
-        return out
-
-    def leaky_relu(self, alpha: float = 0.01) -> 'Tensor':
-        if self.device == 'cpu':
-            out_data = np.where(self.data > 0, self.data, alpha * self.data)
-        else:
-            out_data = cp.where(self.data > 0, self.data, alpha * self.data)
-        require_grad = self.require_grad
-        children = (self,) if require_grad else ()
-        out = Tensor(out_data, children, 'leaky_relu', self.device, self.dtype, require_grad=require_grad)
-        if require_grad:
-            def _backward():
-                if out.grad is not None and self.grad is not None:
-                    if self.device == 'cpu':
-                        slope = np.where(self.data > 0, 1.0, alpha).astype(self.data.dtype)
-                    else:
-                        slope = cp.where(self.data > 0, 1.0, alpha).astype(self.data.dtype)
-                    self.grad += out.grad * slope
-            out._backward = _backward
-        return out
-
-    def gelu(self, approximate: bool = True) -> 'Tensor':
-        # Gaussian Error Linear Unit
-        if approximate:
-            # tanh approximation (Hendrycks & Gimpel)
-            if self.device == 'cpu':
-                c = np.sqrt(2 / np.pi)
-                out_data = 0.5 * self.data * (1.0 + np.tanh(c * (self.data + 0.044715 * (self.data ** 3))))
-            else:
-                c = np.sqrt(2 / np.pi)
-                out_data = 0.5 * self.data * (1.0 + cp.tanh(c * (self.data + 0.044715 * (self.data ** 3))))
-        else:
-            # exact via erf
-            if self.device == 'cpu':
-                out_data = 0.5 * self.data * (1.0 + (2/np.sqrt(np.pi)) * np.vectorize(lambda v: np.math.erf(v/np.sqrt(2)))(self.data))
-            else:
-                out_data = 0.5 * self.data * (1.0 + (2/np.sqrt(np.pi)) * cp.erf(self.data / np.sqrt(2)))
-        require_grad = self.require_grad
-        children = (self,) if require_grad else ()
-        out = Tensor(out_data, children, 'gelu', self.device, self.dtype, require_grad=require_grad)
-        if require_grad:
-            def _backward():
-                if out.grad is not None and self.grad is not None:
-                    if self.device == 'cpu':
-                        c = np.sqrt(2 / np.pi)
-                        tanh_arg = c * (self.data + 0.044715 * (self.data ** 3))
-                        sech2 = 1.0 / (np.cosh(tanh_arg) ** 2)
-                        dgelu = 0.5 * (1.0 + np.tanh(tanh_arg)) + 0.5 * self.data * sech2 * c * (1 + 3 * 0.044715 * (self.data ** 2))
-                    else:
-                        c = np.sqrt(2 / np.pi)
-                        tanh_arg = c * (self.data + 0.044715 * (self.data ** 3))
-                        sech2 = 1.0 / (cp.cosh(tanh_arg) ** 2)
-                        dgelu = 0.5 * (1.0 + cp.tanh(tanh_arg)) + 0.5 * self.data * sech2 * c * (1 + 3 * 0.044715 * (self.data ** 2))
-                    self.grad += out.grad * dgelu
+        # Numerically stable sigmoid
+        sig = np.where(self.data >= 0, 
+                       1 / (1 + np.exp(-self.data)), 
+                       np.exp(self.data) / (1 + np.exp(self.data)))
+        out = Tensor(sig, (self,), 'sigmoid')
+        
+        def _backward():
+            if self.requires_grad:
+                self.grad += sig * (1 - sig) * out.grad
+        
+        if out.requires_grad:
             out._backward = _backward
         return out
 
     def swish(self) -> 'Tensor':
-        sig = self.sigmoid()
-        out = self * sig
-        # backward is handled via autograd chain (mul + sigmoid)
+        # swish(x) = x * sigmoid(x)
+        # We can re-use our stable sigmoid
+        sig = self.sigmoid() 
+        out = self * sig # This builds the graph!
+        out._op = 'swish'
         return out
 
-    def __add__(self, other: 'Tensor') -> 'Tensor':
-        if isinstance(other, Tensor):
-            other_data = other.data
-        else:
-            other_data = other
-        out = Tensor(self.data + other_data, (self, other) if isinstance(other, Tensor) else (self,), '+', self.device, self.dtype, require_grad=self.require_grad or (other.require_grad if isinstance(other, Tensor) else False))
-        if out.require_grad:
-            def _backward():
-                if self.grad is not None and out.grad is not None:
-                    self.grad += Tensor._unbroadcast(out.grad, self.shape)
-                if isinstance(other, Tensor) and other.grad is not None and out.grad is not None:
-                    other.grad += Tensor._unbroadcast(out.grad, other.shape)
-            out._backward = _backward
-        return out
-
-    def __sub__(self, other: Union['Tensor',int,float]) -> 'Tensor':
-        assert isinstance(other, (Tensor, int, float)), "Subtraction only supported with Tensor or scalar"
-        if not isinstance(other, Tensor):
-            other = Tensor(np.array(other, dtype=self.dtype), (), 'scalar', self.device, self.dtype)
+    def tanh(self) -> 'Tensor':
+        t = np.tanh(self.data)
+        out = Tensor(t, (self,), 'tanh')
         
-        out_data = self.data - other.data # this is a numpy array or cupy array 
-        out = Tensor(out_data, (self, other), '-', self.device, self.dtype)
-
-        if out.require_grad:
-            def _backward():
-                if self.grad is not None and out.grad is not None:
-                    self.grad += Tensor._unbroadcast(out.grad, self.shape)
-                if other.grad is not None and out.grad is not None:
-                    other.grad -= Tensor._unbroadcast(out.grad, other.shape)
-            out._backward = _backward
-
-        return out
-
-    def __mul__(self, other: Union[int, float, 'Tensor']) -> 'Tensor':
-        if isinstance(other, Tensor):
-            other_data = other.data
-        else:
-            other_data = other
-        out = Tensor(self.data * other_data, (self, other) if isinstance(other, Tensor) else (self,), '*', self.device, self.dtype, require_grad=self.require_grad or (other.require_grad if isinstance(other, Tensor) else False))
-        if out.require_grad:
-            def _backward():
-                if self.grad is not None and out.grad is not None:
-                    self.grad += Tensor._unbroadcast(other_data * out.grad, self.shape)
-                if isinstance(other, Tensor) and other.grad is not None and out.grad is not None:
-                    other.grad += Tensor._unbroadcast(self.data * out.grad, other.shape)
+        def _backward():
+            if self.requires_grad:
+                self.grad += (1 - t ** 2) * out.grad
+        
+        if out.requires_grad:
             out._backward = _backward
         return out
 
-    def __pow__(self, power: Union[int, float]) -> 'Tensor':
-        assert isinstance(power, (int, float)), "Power must be an integer or float"
-        out_data = self.data ** power # this is is a numpy or cupy array 
-        out = Tensor(out_data, (self,), '**', self.device, self.dtype, require_grad=self.require_grad)
-        if out.require_grad:
-            def _backward():
-                if self.grad is not None and out.grad is not None:
-                    self.grad += Tensor._unbroadcast(power * (self.data ** (power - 1)) * out.grad, self.shape)
+    def softmax(self, axis: int = -1) -> 'Tensor':
+        # Log-sum-exp trick for numerical stability
+        max_val = self.data.max(axis=axis, keepdims=True)
+        e_x = np.exp(self.data - max_val) # Subtract max for stability
+        sum_e_x = e_x.sum(axis=axis, keepdims=True)
+        sm = e_x / (sum_e_x + 1e-8) # Add epsilon for safety
+        
+        out = Tensor(sm, (self,), 'softmax')
+        
+        def _backward():
+            if self.requires_grad:
+                # VJP (Vector-Jacobian Product) for softmax:
+                # Let y = out.data, g = out.grad
+                # dL/dx_i = y_i * (dL/dy_i - sum_j(dL/dy_j * y_j))
+                y = out.data
+                g = out.grad
+                
+                sum_gy = (g * y).sum(axis=axis, keepdims=True)
+                grad_contrib = y * (g - sum_gy)
+                
+                self.grad += grad_contrib
+        
+        if out.requires_grad:
             out._backward = _backward
         return out
 
-    def __truediv__(self, other: Union[int, float, 'Tensor']) -> 'Tensor':
-        if isinstance(other, Tensor):
-            other_data = other.data
-        else:
-            other_data = other
-        out = Tensor(self.data / other_data, (self, other) if isinstance(other, Tensor) else (self,), '/', self.device, self.dtype, require_grad=self.require_grad or (other.require_grad if isinstance(other, Tensor) else False))
-        if out.require_grad:
-            def _backward():
-                if self.grad is not None and out.grad is not None:
-                    self.grad += Tensor._unbroadcast((1 / other_data) * out.grad, self.shape)
-                if isinstance(other, Tensor) and other.grad is not None and out.grad is not None:
-                    other.grad -= Tensor._unbroadcast((self.data / (other_data ** 2)) * out.grad, other.shape)
+    def log_softmax(self, axis: int = -1) -> 'Tensor':
+        # Stable LogSoftmax
+        max_val = self.data.max(axis=axis, keepdims=True)
+        x_minus_max = self.data - max_val
+        log_sum_exp = np.log(np.exp(x_minus_max).sum(axis=axis, keepdims=True) + 1e-8)
+        log_sm = x_minus_max - log_sum_exp
+        
+        out = Tensor(log_sm, (self,), 'log_softmax')
+        
+        def _backward():
+            if self.requires_grad:
+                # VJP for LogSoftmax:
+                # dL/dx_i = dL/dy_i - exp(y_i) * sum_j(dL/dy_j)
+                g = out.grad
+                sm = np.exp(out.data) # = softmax(x)
+                grad_contrib = g - sm * g.sum(axis=axis, keepdims=True)
+                self.grad += grad_contrib
+                
+        if out.requires_grad:
             out._backward = _backward
         return out
 
-    def __matmul__(self, other: 'Tensor') -> 'Tensor':
-        if _HAS_CUDA_BACKEND:
-            out_tensor = self._tensor.matmul(other._tensor)
-            arr = np.array(out_tensor.to_host(), dtype=self.dtype).reshape(out_tensor.shape)
-            return Tensor(arr, device=self.device, dtype=self.dtype, require_grad=self.require_grad or other.require_grad)
-        else:
-            if isinstance(other, Tensor):
-                other_data = other.data
-            else:
-                raise TypeError('Matmul only supported with another Tensor')
-            out = Tensor(self.data @ other_data, (self, other), '@', self.device, self.dtype, require_grad=self.require_grad or other.require_grad)
-            if out.require_grad:
-                def _backward():
-                    grad = out.grad
-                    # For x @ weight: dL/dx = grad @ weight.T, dL/dweight = x.T @ grad
-                    if self.grad is not None and grad is not None:
-                        self.grad += grad @ other_data.T
-                    if other.grad is not None and grad is not None:
-                        other.grad += self.data.T @ grad
-                out._backward = _backward
-            return out
+    # --- Reshaping/Indexing Ops ---
 
-    def __getitem__(self, idx:
-        Union[int, slice, Tuple[Union[int, slice, Tuple[int, ...]], ...]]
-    ) -> 'Tensor':
-        out_data = self.data[idx]
-        require_grad = self.require_grad
-        children = (self,) if require_grad else ()
-        out = Tensor(out_data, children, 'slice', self.device, self.dtype, require_grad=require_grad)
-        if require_grad:
-            def _backward():
-                if self.grad is not None:
-                    grad_full = np.zeros_like(self.data) if self.device=='cpu' else cp.zeros_like(self.data)
-                    grad_full[idx] = out.grad
-                    self.grad += grad_full
+    def reshape(self, *new_shape: int) -> 'Tensor':
+        if -1 in new_shape:
+            # Calculate the -1 dimension
+            new_shape = list(new_shape)
+            known_prod = np.prod([d for d in new_shape if d != -1])
+            new_shape[new_shape.index(-1)] = self.data.size // known_prod
+        
+        assert np.prod(new_shape) == self.data.size, "Invalid shape for reshape"
+        
+        out = Tensor(self.data.reshape(new_shape), (self,), 'reshape')
+        
+        def _backward():
+            if self.requires_grad:
+                self.grad += out.grad.reshape(self.data.shape)
+        
+        if out.requires_grad:
             out._backward = _backward
         return out
-    
-    def reshape(self, *shape: int) -> 'Tensor':
-        out_data = self.data.reshape(shape)
-        require_grad = self.require_grad
-        children = (self,) if require_grad else ()
-        out = Tensor(out_data, children, 'reshape', self.device, self.dtype, require_grad=require_grad)
-        if require_grad:
-            def _backward():
-                if self.grad is not None and out.grad is not None:
-                    self.grad += out.grad.reshape(self.shape)
+
+    def transpose(self, axes: Optional[Tuple[int, ...]] = None) -> 'Tensor':
+        out = Tensor(np.transpose(self.data, axes=axes), (self,), 'transpose')
+        
+        def _backward():
+            if self.requires_grad:
+                # The inverse of a transpose is a transpose with the inverse permutation
+                if axes is None:
+                    inverse_axes = None # Standard matrix transpose
+                else:
+                    inverse_axes = tuple(np.argsort(axes))
+                self.grad += np.transpose(out.grad, axes=inverse_axes)
+        
+        if out.requires_grad:
             out._backward = _backward
         return out
     
-
-    def item(self) -> float:
+    
+    def item(self) -> float: 
+        """Returns the value of this tensor as a standard Python float.
+        Only works for single-element tensors.
+        """
         if self.data.size != 1:
-            raise ValueError("Tensor must have exactly one element to convert to scalar.")
-        return float(self.data.item())
+            raise ValueError("item() can only be called on tensors with one element.")
+        return float(self.data.flatten()[0])  
+    
 
-    def __repr__(self) -> str:
-        return f"Tensor(data={self.data}, grad={self.grad})"
-    def __neg__(self): return self * -1.0
-    def __radd__(self, other): return self + other
-    def __rsub__(self, other): return other + (-self)
-    def __rmul__(self, other): return self * other
+    def __getitem__(self, slices: Union[int, slice, Tuple]) -> 'Tensor':
+        out = Tensor(self.data[slices], (self,), 'slice')
+        
+        def _backward():
+            if self.requires_grad:
+                # Create a grad array of zeros and "scatter" out.grad
+                # into the locations specified by the slice
+                grad_slice = np.zeros_like(self.data)
+                grad_slice[slices] = out.grad
+                self.grad += grad_slice
+        
+        if out.requires_grad:
+            out._backward = _backward
+        return out
 
+    # --- Backward Pass ---
+    
+    def backward(self) -> None:
+        """
+        Performs backpropagation starting from this tensor.
+        Assumes this tensor is the final output (e.g., a scalar loss).
+        """
+        if not self.requires_grad:
+            raise RuntimeError("Cannot call backward on tensor that does not require_grad")
+        
+        # Build topological sort
+        topo = []
+        visited = set()
+        def build_topo(v: 'Tensor'):
+            if v not in visited and v.requires_grad:
+                visited.add(v)
+                for child in v._prev:
+                    build_topo(child)
+                topo.append(v)
+        
+        build_topo(self)
+        
+        # --- Initialize Gradients ---
+        # 1. Set the seed gradient for the output tensor to 1
+        self.grad = np.ones_like(self.data)
+        
+        # 2. Ensure all other tensors in the graph have zeroed gradients
+        #    (This is technically optional if zero_grad() is used, but safer)
+        for node in topo:
+            if node is not self and node.grad is not None:
+                node.grad.fill(0.0)
+            elif node.grad is None and node.requires_grad: # Should not happen, but safeguard
+                node.grad = np.zeros_like(node.data)
+
+        # --- Propagate Gradients ---
+        for node in reversed(topo):
+            node._backward()
