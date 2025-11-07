@@ -7,7 +7,7 @@ class SGD:
         self.params = params
         self.lr = lr
         self.momentum = momentum
-        self.velocities = [p.zeros_like() for p in params]
+        self.velocities = [Tensor.zeros_like(p) for p in params]
 
     def step(self) -> None:
         """Apply one optimization step to all parameters."""
@@ -40,8 +40,8 @@ class Adam:
         self.beta1 = beta1
         self.beta2 = beta2
         self.eps = eps
-        self.m = [p.zeros_like() for p in params]
-        self.v = [p.zeros_like() for p in params]
+        self.m = [Tensor.zeros_like(p) for p in params]
+        self.v = [Tensor.zeros_like(p) for p in params]
         self.t = 0
 
     def step(self) -> None:

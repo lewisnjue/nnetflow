@@ -35,8 +35,8 @@ def cross_entropy_loss(logits:Tensor, targets:Tensor) -> Tensor:
     Returns:
         Tensor: Computed cross-entropy loss 
     """ 
-    probability = logits.softmax(dim=-1)
-    ce_loss = - (targets * probability.log()).sum(dim=-1).mean()
+    probability = logits.softmax(axis=-1)
+    ce_loss = - (targets * probability.log()).sum(axis=-1).mean()
     return ce_loss
 
 def binary_cross_entropy_loss(predictions:Tensor, targets:Tensor) -> Tensor:

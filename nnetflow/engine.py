@@ -292,6 +292,19 @@ class Tensor:
         if out.requires_grad:
             out._backward = _backward
         return out
+    
+    def sqrt(self) -> 'Tensor':
+        """Square root"""
+        out = Tensor(np.sqrt(self.data), (self,), 'sqrt')
+        
+        def _backward():
+            if self.requires_grad:
+                # d/dx(sqrt(x)) = 1 / (2 * sqrt(x))
+                self.grad += (0.5 / (np.sqrt(self.data) + 1e-8)) * out.grad
+        
+        if out.requires_grad:
+            out._backward = _backward
+        return out
 
     def log10(self) -> 'Tensor':
         """Base-10 logarithm"""
