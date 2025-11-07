@@ -1,63 +1,64 @@
-from .engine import Tensor
-from typing import List, Optional, Any
+from nnetflow.engine import Tensor 
+import numpy as np 
 
 
+# loss functions 
 
 
-class CrossEntropyLoss:
-    def __init__(self, reduction: str = 'mean') -> None:
-        super().__init__()
-        self.reduction = reduction
-
-    def __call__(self, logits: Tensor, targets: Tensor) -> Tensor:
-        probs = logits.softmax(axis=-1)
-        loss = -targets * probs.log()
-        if self.reduction == 'mean':
-            return loss.mean().reshape(1)
-        elif self.reduction == 'sum':
-            return loss.sum().reshape(1)
-        else:
-            return loss.reshape(-1)
-
-    def __repr__(self) -> str:
-        return f"CrossEntropyLoss(reduction='{self.reduction}')"
+def mse_loss(predictions:Tensor,targets:Tensor) -> Tensor: 
+    """Mean Squared Error Loss 
+    Args:
+        predictions (Tensor): Predicted values 
+        targets (Tensor): Ground truth values 
+    Returns:
+        Tensor: Computed MSE loss 
+    """
+    return ((predictions - targets) ** 2).mean() 
 
 
+def rmse_loss(predictions:Tensor, targets:Tensor) -> Tensor:
+    """Root Mean Squared Error Loss
+    Args:
+        predictions (Tensor): Predicted values
+        targets (Tensor): Ground truth values
+    Returns:
+        Tensor: Computed RMSE loss
+    """
+    return (((predictions - targets) ** 2).mean()).sqrt() 
 
 
-class L1Loss:
-    def __init__(self, reduction: str = 'mean') -> None:
-        super().__init__()
-        self.reduction = reduction
+def cross_entropy_loss(logits:Tensor, targets:Tensor) -> Tensor: 
+    """Cross Entropy Loss for multi-class classification
+    Args:
+        logits (Tensor): Predicted logits (before softmax) 
+        targets (Tensor): One-hot encoded ground truth labels 
+    Returns:
+        Tensor: Computed cross-entropy loss 
+    """ 
+    probability = logits.softmax(dim=-1)
+    ce_loss = - (targets * probability.log()).sum(dim=-1).mean()
+    return ce_loss
 
-    def __call__(self, input: Tensor, target: Tensor) -> Tensor:
-        loss = (input - target).abs()
-        if self.reduction == 'mean':
-            return loss.mean().reshape(1)
-        elif self.reduction == 'sum':
-            return loss.sum().reshape(1)
-        else:
-            return loss.reshape(-1)
+def binary_cross_entropy_loss(predictions:Tensor, targets:Tensor) -> Tensor:
+    """Binary Cross Entropy Loss for binary classification
+    Args:
+        predictions (Tensor): Predicted probabilities (after sigmoid)
+        targets (Tensor): Ground truth labels (0 or 1)
+    Returns:
+        Tensor: Computed binary cross-entropy loss
+    """
+    bce_loss = - (targets * predictions.log() + (1 - targets) * (1 - predictions).log()).mean()
+    return bce_loss
 
-    def __repr__(self) -> str:
-        return f"L1Loss(reduction='{self.reduction}')"
+def logits_binary_cross_entropy_loss(logits:Tensor, targets:Tensor) -> Tensor:
+    """Binary Cross Entropy Loss with logits for binary classification
+    Args:
+        logits (Tensor): Predicted logits (before sigmoid)
+        targets (Tensor): Ground truth labels (0 or 1)
+    Returns:
+        Tensor: Computed binary cross-entropy loss
+    """
+    probs = logits.sigmoid()
+    bce_loss = - (targets * probs.log() + (1 - targets) * (1 - probs).log()).mean()
+    return bce_loss
 
-
-
-
-class MSELoss:
-    def __init__(self, reduction: str = 'mean') -> None:
-        super().__init__()
-        self.reduction = reduction
-
-    def __call__(self, input: Tensor, target: Tensor) -> Tensor:
-        loss = (input - target) ** 2
-        if self.reduction == 'mean':
-            return loss.mean().reshape(1)
-        elif self.reduction == 'sum':
-            return loss.sum().reshape(1)
-        else:
-            return loss.reshape(-1)
-
-    def __repr__(self) -> str:
-        return f"MSELoss(reduction='{self.reduction}')"
