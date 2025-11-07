@@ -29,7 +29,7 @@ class Linear:
             return [self.weight, self.bias]
         else:
             return [self.weight]
-    
+ 
 
     def __repr__(self) -> str:
         return f"Linear(in_features={self.in_features}, out_features={self.out_features})" 
