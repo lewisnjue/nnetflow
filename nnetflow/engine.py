@@ -488,6 +488,62 @@ class Tensor:
         if out.requires_grad:
             out._backward = _backward
         return out
+    def bool(self) -> 'Tensor':
+        """
+        Casts the tensor's data to a boolean data type.
+        
+        This is a non-differentiable operation and will detach
+        the new tensor from the computation graph.
+        """
+        # We use .data to get the numpy array and .astype() to cast it
+        bool_data = self.data.astype(bool)
+        
+        # Create a new *leaf* Tensor with no gradient history.
+        # This is correct because the operation is not differentiable.
+        out = Tensor(bool_data, requires_grad=False)
+        return out
+    
+    def __bool__(self) -> bool:
+        """
+        Defines the behavior of the Tensor in a boolean context (e.g., `if tensor:`).
+        
+        Raises an error for multi-element tensors because their truth
+        value is ambiguous.
+        """
+        if self.data.size == 1:
+            # .item() extracts the single scalar value from the numpy array
+            return bool(self.data.item())
+        
+        raise ValueError(
+            "The truth value of a Tensor with more than one element is ambiguous. "
+            "Use .any() or .all() if you want to check for element-wise truth."
+        )
+    
+    def masked_fill(self, mask: 'Tensor', fill_value: float) -> 'Tensor':
+        """
+        Fills elements of self tensor with fill_value where mask is True.
+        
+        The mask tensor must be broadcastable to the shape of this tensor
+        and should contain boolean values.
+        """
+        out_data = np.where(mask.data, fill_value, self.data)
+        out = Tensor(out_data, (self,), 'masked_fill')
+        
+        def _backward():
+            # 3. Backward Pass
+            if self.requires_grad:
+                grad_for_self = np.where(mask.data, 0.0, out.grad)
+                
+                # Add the gradient to the parent.
+                self.grad += grad_for_self
+    
+        if self.requires_grad:
+            out._backward = _backward
+            
+        return out
+    
+    def view(self,new_shape):  # mybad :( i am inefficient but that okay 
+        return self.reshape(new_shape)
 
     def transpose(self, axes: Optional[Tuple[int, ...]] = None) -> 'Tensor':
         out = Tensor(np.transpose(self.data, axes=axes), (self,), 'transpose')
@@ -504,7 +560,21 @@ class Tensor:
         if out.requires_grad:
             out._backward = _backward
         return out
+
+
+    def var(self,axis:int=0,keepdims=True) -> 'Tensor':
+        """variance of all elements in the tensor,this is a sample variance (N-1 in denominator)""" 
+        mean = self.mean(axis=axis,keepdims=True)
+        diff = self - mean 
+        sq_diff = diff ** 2
+        var = sq_diff.sum(axis=axis,keepdims=keepdims) / (self.shape[axis] -1)
+        return var
     
+    def std(self,axis:int=0,keepdim=True) -> 'Tensor':
+        """standard deviation of all elements in the tensor,this is a sample std (N-1 in denominator)""" 
+        variance = self.var(axis=axis,keepdim=keepdim)
+        std = variance.sqrt()
+        return std
     
     def item(self) -> float: 
         """Returns the value of this tensor as a standard Python float.
