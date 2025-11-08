@@ -15,8 +15,7 @@ class Linear:
     
     def __call__(self,x:Tensor) -> Tensor:
         assert x.shape[-1] == self.in_features, f"Input feature size mismatch, expected {self.in_features}, got {x.shape[-1]}"
-        assert len(x.shape) == 2, f"Input tensor must be 2D, got {len(x.shape)}D"  
-        # x : (batch_size, in_features) 
+        # x : (batch_size, in_features), or x: (b,t,in) @  (in,out)  
         # weight : (in_features, out_features) 
         # x @ weight (batch_size,in_features) @ (in_features, out_features) = (batch_size, out_features)
         if self.has_bias:
