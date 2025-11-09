@@ -51,6 +51,7 @@ Examples are included in the `examples/` folder and are runnable directly:
 ```bash
 python examples/simple_regression.py
 python examples/binary_classification.py
+python examples/gpt2.py
 ```
 
 They demonstrate model definition, training loops, loss computation and parameter updates using the library primitives.
