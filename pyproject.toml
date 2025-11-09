@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nnetflow"
-version = "2.0.0"
+version = "2.0.1"
 description = "A minimal neural network framework with autodiff and NumPy"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -44,5 +44,19 @@ Source = "https://github.com/lewisnjue/nnetflow"
 Issues = "https://github.com/lewisnjue/nnetflow/issues"
 
 [project.optional-dependencies]
-test = ["pytest>=7.0"]
+test = ["pytest>=7.0", "pytest-cov>=4.0"]
 typecheck = ["mypy>=1.5"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]

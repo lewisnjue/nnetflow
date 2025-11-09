@@ -33,7 +33,10 @@ class SGD:
 
 
 class Adam:
-    """Adam optimizer."""
+    """
+    Adam optimizer.
+    link to the paper: https://arxiv.org/abs/1412.6980
+    """
     def __init__(self, params: List[Tensor], lr: float = 0.001, beta1: float = 0.9, beta2: float = 0.999, eps: float = 1e-8) -> None:
         self.params = params
         self.lr = lr

@@ -174,7 +174,7 @@ class Tensor:
             if self.requires_grad:
                 self.grad += Tensor.unbroadcast((1 / other_val_safe) * out.grad, self.data.shape)
             if isinstance(other, Tensor) and other.requires_grad:
-                self.grad += Tensor.unbroadcast((-self.data / (other_val_safe ** 2)) * out.grad, other.data.shape)
+                other.grad += Tensor.unbroadcast((-self.data / (other_val_safe ** 2)) * out.grad, other.data.shape)
                 
         if out.requires_grad:
             out._backward = _backward

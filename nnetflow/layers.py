@@ -109,15 +109,6 @@ class BatchNorm1d:
         return out
     
     def parameters(self):
-        if self.affine:
-            return [self.gamma, self.beta]
-        return []
-
-    def __repr__(self) -> str:
-        return (f"BatchNorm1d(num_features={self.num_features}, "
-                f"eps={self.eps}, momentum={self.momentum}, affine={self.affine})")
-    
-    def parameters(self):
         return [self.gamma, self.beta]
 
     def __repr__(self) -> str:
@@ -196,8 +187,11 @@ class Dropout:
 
     def parameters(self):
         return []
-
-
+        
+    def train(self):
+        self.training = True
+    def eval(self):
+        self.training = False
 
 
 class Flatten:

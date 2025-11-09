@@ -12,7 +12,7 @@ Key design goals:
 - Small, focused feature set for learning (Linear layer, losses, optimizers)
 - Well-tested: unit tests exercise core pieces (Tensor, Linear, losses, optimizers)
 
-This repository represents the v2.0.0 release — a cleaned-up, documented, and tested baseline.
+This repository represents the v2.0.1 release — a cleaned-up, documented, and tested baseline with bug fixes and improvements.
 
 ## Highlights
 
@@ -59,16 +59,13 @@ They demonstrate model definition, training loops, loss computation and paramete
 
 ```python
 import numpy as np
-from nnetflow.engine import Tensor
-from nnetflow.layers import Linear
-from nnetflow.losses import mse_loss
-from nnetflow.optim import Adam
+from nnetflow import Tensor, Linear, mse_loss, Adam
 
 X = np.random.randn(128, 3)
 y = np.random.randn(128, 1)
 
 layer = Linear(3, 1)
-opt = Adam([layer.weight, layer.bias], lr=1e-2)
+opt = Adam(layer.parameters(), lr=1e-2)
 
 X_t = Tensor(X, requires_grad=False)
 y_t = Tensor(y, requires_grad=False)
@@ -82,6 +79,14 @@ for epoch in range(100):
 
     if (epoch + 1) % 10 == 0:
         print(f"epoch {epoch+1}: loss={loss.item():.4f}")
+```
+
+You can also import components individually:
+```python
+from nnetflow.engine import Tensor
+from nnetflow.layers import Linear
+from nnetflow.losses import mse_loss, cross_entropy_loss
+from nnetflow.optim import SGD, Adam
 ```
 
 ## Testing
@@ -109,12 +114,92 @@ To run the hooks locally (including the pytest hook configured for pre-push):
 pre-commit run --all-files
 ```
 
+## API Reference
+
+### Tensor Operations
+
+The `Tensor` class is the core of nnetflow, providing automatic differentiation:
+
+```python
+from nnetflow import Tensor
+
+# Create tensors
+x = Tensor([1.0, 2.0, 3.0], requires_grad=True)
+y = Tensor([4.0, 5.0, 6.0], requires_grad=True)
+
+# Operations
+z = x + y          # Addition
+z = x * y          # Multiplication
+z = x / y          # Division
+z = x @ y          # Matrix multiplication (if compatible shapes)
+z = x.sum()        # Sum reduction
+z = x.mean()       # Mean reduction
+
+# Activations
+z = x.relu()       # ReLU
+z = x.sigmoid()    # Sigmoid
+z = x.tanh()       # Tanh
+z = x.softmax()    # Softmax
+
+# Backward pass
+z.backward()       # Compute gradients
+```
+
+### Layers
+
+```python
+from nnetflow import Linear
+
+# Linear layer
+layer = Linear(in_features=10, out_features=5, bias=True)
+output = layer(input_tensor)
+params = layer.parameters()  # Get trainable parameters
+```
+
+### Loss Functions
+
+```python
+from nnetflow import (
+    mse_loss, 
+    rmse_loss, 
+    cross_entropy_loss, 
+    binary_cross_entropy_loss,
+    logits_binary_cross_entropy_loss
+)
+
+# Regression losses
+loss = mse_loss(predictions, targets)
+loss = rmse_loss(predictions, targets)
+
+# Classification losses
+loss = cross_entropy_loss(logits, one_hot_targets)
+loss = binary_cross_entropy_loss(probabilities, targets)
+loss = logits_binary_cross_entropy_loss(logits, targets)
+```
+
+### Optimizers
+
+```python
+from nnetflow import SGD, Adam
+
+# SGD with optional momentum
+optimizer = SGD(params, lr=0.01, momentum=0.9)
+
+# Adam optimizer
+optimizer = Adam(params, lr=0.001, beta1=0.9, beta2=0.999)
+
+# Training step
+optimizer.zero_grad()  # Clear gradients
+loss.backward()        # Compute gradients
+optimizer.step()       # Update parameters
+```
+
 ## Project structure
 
 ```
 nnetflow/                 # package source
   engine.py               # Tensor & autodiff engine
-  layers.py               # Linear, Flatten
+  layers.py               # Linear, BatchNorm1d, LayerNorm, etc.
   losses.py               # loss functions
   optim.py                # optimizers
 examples/                 # runnable examples
@@ -134,7 +219,7 @@ See `CONTRIBUTING.md` for more details.
 
 ## Changelog
 
-See `CHANGELOG.md` for details on releases. The repository is now at v2.0.0.
+See `CHANGELOG.md` for details on releases. The repository is now at v2.0.1.
 
 ## License
 
