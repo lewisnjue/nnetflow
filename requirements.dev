@@ -1,6 +1,8 @@
 scikit-learn
-pytest>=7.0
+pytest
 pre-commit
 coverage
 tiktoken
 kagglehub
+torch
+pytest-cov

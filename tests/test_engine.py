@@ -88,6 +88,7 @@ class TestTensorBackward:
         
         # d/dx (x/y) = 1/y = 1/2 = 0.5
         assert np.allclose(x.grad, [0.5])
+        assert y.grad is None
     
     def test_division_backward_denominator(self):
         """Test division backward pass for denominator - CRITICAL TEST."""

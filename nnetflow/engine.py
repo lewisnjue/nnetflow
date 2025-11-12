@@ -90,33 +90,70 @@ class Tensor:
     
     @classmethod  
     def zeros(cls, *shape: int, requires_grad: bool = False) -> 'Tensor':
+        """ 
+        Args: 
+            shape: the shape of your tensor 
+            requires_grad: if the tensor requires gradient tracking 
+        Returns: 
+            Tensor filled with zero 
+        """ 
         return cls(np.zeros(shape), requires_grad=requires_grad)
 
     @classmethod
     def ones(cls, *shape: int, requires_grad: bool = False) -> 'Tensor':
+        """ 
+        Args: 
+            shape: the shape of the Tensor 
+            requires_grad: if the Tensor require gradient tracking 
+        Returns: 
+            Tensor filled with ones 
+        """ 
         return cls(np.ones(shape), requires_grad=requires_grad)
 
     @classmethod  
     def randn(cls, *shape: int, requires_grad: bool = False) -> 'Tensor':
-        # Ensure float64 for better precision in grads
+        """ 
+        creates a tensor filled with random numbers 
+        Args: 
+            shape: the shape of the Tensor 
+            requires_grad: if the Tensor require gradient tracking 
+        Returns: 
+            Tensor 
+        """ 
         data = np.random.randn(*shape).astype(np.float64) 
         return cls(data, requires_grad=requires_grad)
 
     @classmethod  
     def zeros_like(cls, tensor: 'Tensor', requires_grad: Optional[bool] = None) -> 'Tensor':
+        """ 
+        creates a Tensor filled with zeros of the shape of a given Tensor 
+        Args: 
+            tensor: tensor of the shape you want to create a new Tensor based on its shape 
+            requires_grad: if the new created Tensor requires gradient tracking 
+        Returns: 
+            Tensor 
+        """ 
         if requires_grad is None:
             requires_grad = tensor.requires_grad
         return cls(np.zeros_like(tensor.data), requires_grad=requires_grad)
 
     @classmethod
     def ones_like(cls, tensor: 'Tensor', requires_grad: Optional[bool] = None) -> 'Tensor':
+        """ 
+        create a tensor filled with ones of the shape of the passed tensor 
+        Args: 
+            tensor: Tensor of the shape you want to create 
+            requires_grad: if the new tensor created will require gradient tracking 
+        Returns: 
+            Tensor 
+        """ 
         if requires_grad is None:
             requires_grad = tensor.requires_grad
         return cls(np.ones_like(tensor.data), requires_grad=requires_grad)
 
     # --- Basic Arithmetic Ops ---
 
-    def __add__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':
+    def __add__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':  
         other_val = other.data if isinstance(other, Tensor) else other
         children = (self, other) if isinstance(other, Tensor) else (self,)
         
@@ -131,6 +168,15 @@ class Tensor:
         if out.requires_grad:
             out._backward = _backward
         return out
+    
+    def add(self,x:'Tensor'): 
+        """ 
+        add two tensors to create a new tensor 
+        Args: 
+            x: Tensor to which to add to self tensor 
+        """
+        return self.__add__(x) 
+
 
     def __mul__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':
         other_val = other.data if isinstance(other, Tensor) else other
@@ -147,6 +193,14 @@ class Tensor:
         if out.requires_grad:
             out._backward = _backward
         return out
+    
+    def matmul(self,x:'Tensor'): 
+        """ 
+        perform matrix multiplication of two tensors 
+        Args: 
+            x: the tensor on which self will perform matrix multiplication 
+        """ 
+        return self.__matmul__(x) 
 
     def __pow__(self, other: Union[float, int]) -> 'Tensor':
         assert isinstance(other, (float, int)), "Only support float and int power for Tensor"
@@ -325,6 +379,9 @@ class Tensor:
     # --- Activation Functions ---
 
     def relu(self) -> 'Tensor':
+        """ 
+        Perform relu activation pased on this paper : https://arxiv.org/abs/1803.08375
+        """ 
         out = Tensor(np.maximum(self.data, 0), (self,), 'relu')
         
         def _backward():
@@ -336,6 +393,9 @@ class Tensor:
         return out
 
     def leaky_relu(self, alpha: float = 0.01) -> 'Tensor': 
+        """ 
+        perform activation pased on this paper : https://arxiv.org/abs/1505.00853 
+        """ 
         out = Tensor(np.where(self.data > 0, self.data, alpha * self.data), (self,), 'leaky_relu')
         
         def _backward():
@@ -347,6 +407,9 @@ class Tensor:
         return out
 
     def elu(self, alpha: float = 1.0) -> 'Tensor':
+        """ 
+        perform activation based on this paper : https://arxiv.org/abs/1511.07289 
+        """ 
         out = Tensor(np.where(self.data > 0, self.data, alpha * (np.exp(self.data) - 1)), (self,), 'elu')
         
         def _backward():
@@ -359,6 +422,9 @@ class Tensor:
         return out
 
     def selu(self, alpha: float = 1.67326, scale: float = 1.0507) -> 'Tensor': # Renamed beta to scale
+        """ 
+        perform activation based on this paper : https://arxiv.org/abs/1706.02515 
+        """ 
         out = Tensor(scale * np.where(self.data > 0, self.data, alpha * (np.exp(self.data) - 1)), (self,), 'selu')
         
         def _backward():
@@ -370,6 +436,9 @@ class Tensor:
         return out
 
     def gelu(self) -> 'Tensor':
+        """ 
+        perform gelu activation based on this paper : https://arxiv.org/abs/1606.08415 
+        """ 
         # Using the scipy.special.erf implementation
         out_data = 0.5 * self.data * (1 + sp.erf(self.data / np.sqrt(2)))
         out = Tensor(out_data, (self,), 'gelu')
@@ -386,6 +455,9 @@ class Tensor:
         return out
 
     def sigmoid(self) -> 'Tensor':
+        """ 
+        perform sigmoid activation  
+        """ 
         # Numerically stable sigmoid
         sig = np.where(self.data >= 0, 
                        1 / (1 + np.exp(-self.data)), 
@@ -401,6 +473,9 @@ class Tensor:
         return out
 
     def swish(self) -> 'Tensor':
+        """ 
+        perform swish activation pased on this paper : https://arxiv.org/pdf/1710.05941v1 
+        """ 
         # swish(x) = x * sigmoid(x)
         # We can re-use our stable sigmoid
         sig = self.sigmoid() 
@@ -409,6 +484,9 @@ class Tensor:
         return out
 
     def tanh(self) -> 'Tensor':
+        """
+        perform tanh to the Tensor 
+        """ 
         t = np.tanh(self.data)
         out = Tensor(t, (self,), 'tanh')
         
@@ -421,6 +499,10 @@ class Tensor:
         return out
 
     def softmax(self, axis: int = -1) -> 'Tensor':
+        """ 
+        perform softmax operation  to the Tensor 
+        """ 
+
         # Log-sum-exp trick for numerical stability
         max_val = self.data.max(axis=axis, keepdims=True)
         e_x = np.exp(self.data - max_val) # Subtract max for stability
@@ -447,6 +529,9 @@ class Tensor:
         return out
 
     def log_softmax(self, axis: int = -1) -> 'Tensor':
+        """ 
+        perform log_sotmax 
+        """ 
         # Stable LogSoftmax
         max_val = self.data.max(axis=axis, keepdims=True)
         x_minus_max = self.data - max_val
@@ -471,6 +556,9 @@ class Tensor:
     # --- Reshaping/Indexing Ops ---
 
     def reshape(self, *new_shape: int) -> 'Tensor':
+        """ 
+        reshape the tensor to a new shape , rember that this creates a new tensor not efficient :( 
+        """ 
         if -1 in new_shape:
             # Calculate the -1 dimension
             new_shape = list(new_shape)
@@ -488,6 +576,16 @@ class Tensor:
         if out.requires_grad:
             out._backward = _backward
         return out
+    def shape(self) -> Tuple[int, ...]:
+        return self.data.shape
+    def size(self) -> int:
+        return self.data.size
+    def ndim(self) -> int:
+        return self.data.ndim
+    def numel(self) -> int:
+        return self.data.numel
+    def dim(self) -> int:
+        return self.data.dim()
     def bool(self) -> 'Tensor':
         """
         Casts the tensor's data to a boolean data type.
@@ -543,9 +641,15 @@ class Tensor:
         return out
     
     def view(self,new_shape):  # mybad :( i am inefficient but that okay 
+        """ 
+        reshape the tensor to the new shape but creates a new tensor not efficient  
+        """ 
         return self.reshape(new_shape)
 
     def transpose(self, axes: Optional[Tuple[int, ...]] = None) -> 'Tensor':
+        """ 
+        transpose a tensor on the given axes but create a new tensor , not efficient 
+        """ 
         out = Tensor(np.transpose(self.data, axes=axes), (self,), 'transpose')
         
         def _backward():

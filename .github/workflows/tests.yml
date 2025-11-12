@@ -31,14 +31,21 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          # ------------------------------------------------------------------
+          # UPDATED: Hashes both files for a more specific cache key
+          # ------------------------------------------------------------------
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt', '**/requirements.dev') }}
           restore-keys: |
             ${{ runner.os }}-pip-
       
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install numpy scipy pytest pytest-cov
+          # ------------------------------------------------------------------
+          # UPDATED: Installs from your requirement files
+          # ------------------------------------------------------------------
+          pip install -r requirements.txt
+          pip install -r requirements.dev
           pip install -e .
       
       - name: Run tests with pytest
