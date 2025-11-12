@@ -4,3 +4,4 @@ pre-commit
 coverage
 tiktoken
 kagglehub
+torch
