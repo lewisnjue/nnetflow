@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+
+##[2.0.2] - 2025-11-12 
+
+### Added 
+- convolution layers (conv1d and conv2d) 
+- pooling layers (maxpool1d and maxpool2d )
+- test for pooling layers and convolutin layers 
+- doc string improvent 
+
 ## [2.0.1] - 2025-11-09
 
 ### Fixed
