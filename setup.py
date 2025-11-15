@@ -13,7 +13,8 @@ setup(
     author_email="lewiskinyuanjue.ke@gmail.com",
     url="https://github.com/lewisnjue/nnetflow",
     packages=find_packages(),
-    install_requires=["numpy"],
+    # Keep in sync with pyproject.toml dependencies
+    install_requires=["numpy", "scipy>=1.9"],
     python_requires=">=3.8",
     include_package_data=True,
     classifiers=[

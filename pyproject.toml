@@ -12,7 +12,11 @@ license = { text = "MIT" }
 authors = [
   { name = "Lewis Njue", email = "lewiskinyuanjue.ke@gmail.com" }
 ]
-dependencies = ["numpy"]
+# Runtime dependencies (engine.gelu and experimental activations require SciPy)
+dependencies = [
+  "numpy",
+  "scipy>=1.9",
+]
 
 keywords = [
   "neural network",
