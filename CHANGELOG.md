@@ -3,6 +3,24 @@
 All notable changes to this project are documented in this file.
 
 
+## [2.0.3] - 2025-11-15
+
+### Added
+- Simple tanh-based `RNN` layer for sequential data with tests.
+- Tests for GELU paths and SciPy-backed activations.
+
+### Fixed
+- Tensor helper methods (`shape`, `size`, `ndim`, `numel`, `dim`) now
+  delegate correctly to the underlying NumPy array.
+- `Tensor.var`/`Tensor.std` now match NumPy sample variance/std
+  semantics and support `axis` + `keepdims`.
+- `Tensor.view` now accepts both varargs and a tuple shape and forwards
+  them correctly to `reshape`.
+
+### Packaging
+- Declare `scipy>=1.9` as a runtime dependency in both `pyproject.toml`
+  and `setup.py`.
+
 ##[2.0.2] - 2025-11-12 
 
 ### Added 

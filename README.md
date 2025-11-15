@@ -12,7 +12,7 @@ Key design goals:
 - Small, focused feature set for learning (Linear layer, losses, optimizers)
 - Well-tested: unit tests exercise core pieces (Tensor, Linear, losses, optimizers)
 
-This repository represents the v2.0.2 release — a cleaned-up, documented, and tested baseline with bug fixes and improvements.
+This repository represents the v2.0.3 release — a cleaned-up, documented, and tested baseline with bug fixes and improvements.
 
 ## Highlights
 
@@ -220,7 +220,7 @@ See `CONTRIBUTING.md` for more details.
 
 ## Changelog
 
-See `CHANGELOG.md` for details on releases. The repository is now at v2.0.2.
+See `CHANGELOG.md` for details on releases. The repository is now at v2.0.3.
 
 ## License
 
