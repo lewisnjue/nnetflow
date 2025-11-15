@@ -666,17 +666,35 @@ class Tensor:
         return out
 
 
-    def var(self,axis:int=0,keepdims=True) -> 'Tensor':
-        """variance of all elements in the tensor,this is a sample variance (N-1 in denominator)""" 
-        mean = self.mean(axis=axis,keepdims=True)
-        diff = self - mean 
+    def var(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims: bool = True) -> 'Tensor':
+        """Sample variance of tensor elements (unbiased, denominator N-1).
+
+        Args:
+            axis: Axis or axes along which to compute the variance. If ``None``,
+                variance is computed over all elements.
+            keepdims: Whether to keep the reduced dimensions.
+        """
+        # Compute mean along the given axis.
+        mean = self.mean(axis=axis, keepdims=True)
+        diff = self - mean
         sq_diff = diff ** 2
-        var = sq_diff.sum(axis=axis,keepdims=keepdims) / (self.shape[axis] -1)
+
+        # Number of elements along the reduction axes
+        if axis is None:
+            n = self.data.size
+        elif isinstance(axis, int):
+            n = self.data.shape[axis]
+        else:  # tuple of axes
+            n = int(np.prod([self.data.shape[a] for a in axis]))
+
+        # Use sample variance (N - 1 in the denominator) with a safe minimum of 1
+        denom = max(n - 1, 1)
+        var = sq_diff.sum(axis=axis, keepdims=keepdims) / denom
         return var
     
-    def std(self,axis:int=0,keepdim=True) -> 'Tensor':
-        """standard deviation of all elements in the tensor,this is a sample std (N-1 in denominator)""" 
-        variance = self.var(axis=axis,keepdim=keepdim)
+    def std(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims: bool = True) -> 'Tensor':
+        """Sample standard deviation of tensor elements (sqrt of sample variance)."""
+        variance = self.var(axis=axis, keepdims=keepdims)
         std = variance.sqrt()
         return std
     
