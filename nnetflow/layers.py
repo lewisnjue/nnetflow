@@ -895,3 +895,116 @@ class MaxPool1d:
     def __repr__(self) -> str:
         return (f"MaxPool1d(kernel_size={self.kernel_size}, "
                 f"stride={self.stride}, padding={self.padding})")
+
+
+
+class RNN:
+    """ 
+    A simple RNN layer capable of handling sequential data.
+
+    Notes:
+        * Expects input of shape ``(batch_size, time_steps, n_features)``.
+        * Uses a vanilla tanh RNN cell.
+        * This is a simplified implementation and currently assumes a fixed
+          input feature size inferred on the first forward pass.
+    """
+
+    def __init__(self, n_neurons: int = 1, return_sequence: bool = False) -> None:
+        """ 
+        Args:
+            n_neurons: Number of hidden units in this RNN layer.
+            return_sequence: If True, returns the hidden state at every
+                time step with shape ``(batch_size, time_steps, n_neurons)``.
+                If False, returns only the final hidden state with shape
+                ``(batch_size, n_neurons)``.
+        """
+        self.n_neurons = n_neurons
+        self.return_sequence = return_sequence
+
+        # Parameters will be lazily initialized on the first forward pass
+        # once we know the input feature dimension.
+        self._initialized = False
+        self.input_size: Optional[int] = None
+
+    def _init_parameters(self, n_features: int) -> None:
+        """Initialize RNN parameters based on the input feature size."""
+        self.input_size = n_features
+        # Xavier/Glorot-like scaling for stability
+        limit = np.sqrt(1.0 / max(1, n_features))
+
+        Wxh = np.random.randn(n_features, self.n_neurons) * limit
+        Whh = np.random.randn(self.n_neurons, self.n_neurons) * limit
+        bh = np.zeros((1, self.n_neurons))
+
+        self.Wxh = Tensor(Wxh, requires_grad=True)
+        self.Whh = Tensor(Whh, requires_grad=True)
+        self.bh = Tensor(bh, requires_grad=True)
+
+        self._initialized = True
+
+    def __call__(self, x: Tensor) -> Tensor:
+        """Perform the forward pass of the RNN.
+
+        Args:
+            x: Input tensor of shape (batch_size, time_steps, n_features).
+        Returns:
+            Tensor of shape (batch_size, time_steps, n_neurons) if
+            ``return_sequence=True`` else (batch_size, n_neurons).
+        """
+        assert len(x.shape) == 3, f"Expected input to be 3D got {len(x.shape)}"
+        batch_size, time_steps, n_features = x.shape
+
+        if not self._initialized:
+            self._init_parameters(n_features)
+        else:
+            assert (
+                n_features == self.input_size
+            ), f"RNN expected input feature size {self.input_size}, got {n_features}"
+
+        # Initial hidden state h_0 = 0
+        h_t = Tensor.zeros(batch_size, self.n_neurons, requires_grad=False)
+        outputs: List[Tensor] = []
+
+        for t in range(time_steps):
+            x_t = x[:, t, :]  # (batch_size, n_features)
+            h_t = (x_t @ self.Wxh + h_t @ self.Whh + self.bh).tanh()
+            if self.return_sequence:
+                outputs.append(h_t)
+
+        if self.return_sequence:
+            # Stack hidden states along the time dimension: (B, T, H)
+            out_data = np.stack([h.data for h in outputs], axis=1)
+            out = Tensor(out_data, _children=tuple(outputs), _op='RNNSequence')
+
+            if out.requires_grad:
+                def _backward():
+                    grad_out = out.grad  # (B, T, H)
+                    for t, h in enumerate(outputs):
+                        if h.requires_grad:
+                            h.grad += grad_out[:, t, :]
+
+                out._backward = _backward
+
+            return out
+        else:
+            # Only return the final hidden state
+            return h_t
+
+    def parameters(self) -> List[Tensor]:
+        """Return the trainable parameters of the RNN layer."""
+        if not self._initialized:
+            raise RuntimeError(
+                "RNN parameters are not initialized yet. "
+                "Call the layer with an input tensor before accessing parameters."
+            )
+        return [self.Wxh, self.Whh, self.bh]
+
+    def __repr__(self) -> str:
+        base = f"RNN(n_neurons={self.n_neurons}, return_sequence={self.return_sequence}"
+        if self.input_size is not None:
+            base += f", input_size={self.input_size}"
+        return base + ")"
+
+    def __str__(self) -> str:
+        return self.__repr__()
+    
