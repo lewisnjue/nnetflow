@@ -31,6 +31,20 @@ class TestTensorBasic:
         assert not t2.requires_grad
         assert t2.grad is None
 
+    def test_tensor_shape_size_ndim_numel_dim_helpers(self):
+        """Tensor helper APIs delegate correctly to underlying numpy array."""
+        data = np.random.randn(2, 3, 4)
+        t = Tensor(data)
+
+        # Attribute-style helpers
+        assert t.shape == data.shape
+        assert t.size == data.size
+        assert t.ndim == data.ndim
+
+        # Method-style helpers
+        assert t.numel() == data.size
+        assert t.dim() == data.ndim
+
 
 class TestTensorArithmetic:
     """Test Tensor arithmetic operations."""
