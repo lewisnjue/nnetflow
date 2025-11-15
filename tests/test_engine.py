@@ -267,6 +267,19 @@ class TestTensorReductions:
         np.testing.assert_allclose(t_var_1.data, np_var_1, rtol=1e-6, atol=1e-8)
         np.testing.assert_allclose(t_std_1.data, np_std_1, rtol=1e-6, atol=1e-8)
 
+    def test_view_behaves_like_reshape_and_supports_tuple(self):
+        """Tensor.view should match reshape semantics and accept tuple or varargs."""
+        data = np.arange(12, dtype=float)
+        x = Tensor(data.copy(), requires_grad=False)
+
+        v1 = x.view(3, 4)
+        v2 = x.view((3, 4))
+        v3 = x.view(2, -1)
+
+        np.testing.assert_allclose(v1.data, data.reshape(3, 4))
+        np.testing.assert_allclose(v2.data, data.reshape(3, 4))
+        np.testing.assert_allclose(v3.data, data.reshape(2, -1))
+
 
 class TestTensorMatmul:
     """Test matrix multiplication."""
