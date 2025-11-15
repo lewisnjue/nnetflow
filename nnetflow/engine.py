@@ -655,11 +655,20 @@ class Tensor:
             
         return out
     
-    def view(self,new_shape):  # mybad :( i am inefficient but that okay 
+    def view(self, *new_shape):  # mybad :( i am inefficient but that okay 
         """ 
-        reshape the tensor to the new shape but creates a new tensor not efficient  
+        Reshape the tensor using a view-like API.
+
+        This is a thin wrapper around :meth:`reshape` that accepts a
+        variable number of dimensions or a single tuple, e.g.::
+
+            x.view(2, 3)
+            x.view((2, 3))
         """ 
-        return self.reshape(new_shape)
+        # Support either x.view(2, 3) or x.view((2, 3))
+        if len(new_shape) == 1 and isinstance(new_shape[0], (tuple, list)):
+            new_shape = tuple(new_shape[0])
+        return self.reshape(*new_shape)
 
     def transpose(self, axes: Optional[Tuple[int, ...]] = None) -> 'Tensor':
         """ 
