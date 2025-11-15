@@ -230,6 +230,43 @@ class TestTensorReductions:
         # Gradient of sum is all ones
         assert np.allclose(x.grad, [1.0, 1.0, 1.0])
 
+    def test_var_std_match_numpy_all_elements(self):
+        """Tensor.var/std should match NumPy sample variance/std over all elements."""
+        data = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        x = Tensor(data, requires_grad=False)
+
+        t_var = x.var(axis=None, keepdims=False)
+        t_std = x.std(axis=None, keepdims=False)
+
+        np_var = data.var(axis=None, ddof=1)
+        np_std = data.std(axis=None, ddof=1)
+
+        np.testing.assert_allclose(t_var.data, np_var, rtol=1e-6, atol=1e-8)
+        np.testing.assert_allclose(t_std.data, np_std, rtol=1e-6, atol=1e-8)
+
+    def test_var_std_axes_and_keepdims(self):
+        """Tensor.var/std should support axis and keepdims like NumPy (sample)."""
+        data = np.arange(12, dtype=float).reshape(3, 4)
+        x = Tensor(data, requires_grad=False)
+
+        # axis=0
+        t_var_0 = x.var(axis=0, keepdims=False)
+        t_std_0 = x.std(axis=0, keepdims=False)
+        np_var_0 = data.var(axis=0, ddof=1)
+        np_std_0 = data.std(axis=0, ddof=1)
+
+        np.testing.assert_allclose(t_var_0.data, np_var_0, rtol=1e-6, atol=1e-8)
+        np.testing.assert_allclose(t_std_0.data, np_std_0, rtol=1e-6, atol=1e-8)
+
+        # axis=1 with keepdims
+        t_var_1 = x.var(axis=1, keepdims=True)
+        t_std_1 = x.std(axis=1, keepdims=True)
+        np_var_1 = data.var(axis=1, ddof=1, keepdims=True)
+        np_std_1 = data.std(axis=1, ddof=1, keepdims=True)
+
+        np.testing.assert_allclose(t_var_1.data, np_var_1, rtol=1e-6, atol=1e-8)
+        np.testing.assert_allclose(t_std_1.data, np_std_1, rtol=1e-6, atol=1e-8)
+
 
 class TestTensorMatmul:
     """Test matrix multiplication."""
