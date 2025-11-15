@@ -28,7 +28,6 @@ class Tensor:
             data = data.astype(np.float64)
         
         self.data = data
-        self.shape = self.data.shape
         self._op = _op
         self._prev: Set['Tensor'] = set(c for c in _children if isinstance(c, Tensor))
 
@@ -576,16 +575,32 @@ class Tensor:
         if out.requires_grad:
             out._backward = _backward
         return out
+
+    # --- Shape / size helpers ---
+
+    @property
     def shape(self) -> Tuple[int, ...]:
+        """Return the shape of the underlying data (tuple of ints)."""
         return self.data.shape
+
+    @property
     def size(self) -> int:
-        return self.data.size
+        """Total number of elements in the tensor (alias for ``numel``)."""
+        return int(self.data.size)
+
+    @property
     def ndim(self) -> int:
-        return self.data.ndim
+        """Number of dimensions of the tensor."""
+        return int(self.data.ndim)
+
     def numel(self) -> int:
-        return self.data.numel
+        """PyTorch-style alias for the total number of elements in the tensor."""
+        return int(self.data.size)
+
     def dim(self) -> int:
-        return self.data.dim()
+        """PyTorch-style alias for the number of dimensions of the tensor."""
+        return int(self.data.ndim)
+
     def bool(self) -> 'Tensor':
         """
         Casts the tensor's data to a boolean data type.
