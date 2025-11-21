@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.nnetflow/
 delete_me.py 
 notebooks/
 *.pkl 

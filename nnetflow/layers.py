@@ -468,7 +468,8 @@ class BatchNorm1d:
         """ 
         return the trainable parameters 
         """ 
-        return [self.gamma, self.beta]
+        if self.affine:
+            return [self.gamma, self.beta]
 
     def __repr__(self) -> str:
         num_features = self.gamma.shape[1]

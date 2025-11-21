@@ -1,5 +1,6 @@
 import numpy as np
-from typing import Union, List, Literal, Tuple, Optional, Set
+import warnings 
+from typing import Union, Tuple, Optional, Set
 import scipy.special as sp 
 
 class Tensor:
@@ -8,42 +9,39 @@ class Tensor:
     and backpropagation.
     """
     def __init__(self, 
-                 data: Union[np.ndarray, float, int, list, tuple], 
-                 _children: Tuple['Tensor', ...] = (), 
-                 _op: str = '', 
-                 requires_grad: Optional[bool] = None) -> None:
-        
-        if not isinstance(data, np.ndarray):
-            # If it's not an array (e.g., list, tuple, float, int), try to convert it.
-            try:
-                data = np.array(data, dtype=np.float64)
-            except Exception as e:
-                # This will catch truly weird inputs (like dicts)
-                raise TypeError(f"Could not convert data of type {type(data)} to np.ndarray. Error: {e}")
-        
-        # Now we know 'data' is an ndarray.
-        # We must ensure it's a float type for gradients.
-        if not np.issubdtype(data.dtype, np.floating):
-            # print(f"Warning: Converting non-float ndarray ({data.dtype}) to float64.")
-            data = data.astype(np.float64)
-        
-        self.data = data
-        self._op = _op
-        self._prev: Set['Tensor'] = set(c for c in _children if isinstance(c, Tensor))
+            data: Union[np.ndarray, float, int, list, tuple], 
+            _children: Tuple['Tensor', ...] = (), 
+            _op: str = '', 
+            requires_grad: Optional[bool] = None) -> None:
+            """
+            Args:
+            data: the dat for which to create tensor with 
+            _children: Tuple of the tensors that created this tensor 
+            _op: the operation that created this tensor, this is meant for visualization 
+            requires_grad: bool of if the Tensor requires gradient tracking 
+            """
+    
+            if not isinstance(data, np.ndarray):
+                try:
+                    data = np.array(data, dtype=np.float64)
+                except Exception as e:
+                    raise TypeError(f"Could not convert data of type {type(data)} to np.ndarray. Error: {e}")
+            
+            if not np.issubdtype(data.dtype, np.floating): 
+                data = data.astype(np.float64)
+            
+            self.data = data
+            self._op = _op
+            self._prev: Set['Tensor'] = set(c for c in _children if isinstance(c, Tensor))
 
-        # --- Grad Propagation Logic ---
-        if requires_grad is None:
-            # Infer: True if ANY child requires_grad
-            self.requires_grad = any(c.requires_grad for c in self._prev)
-        else:
-            # Explicitly set (for leaf nodes)
-            self.requires_grad = bool(requires_grad)
+            if requires_grad is None:
+                self.requires_grad = any(c.requires_grad for c in self._prev)
+            else:
+                self.requires_grad = bool(requires_grad)
 
-        # Initialize grad only if needed
-        self.grad: Optional[np.ndarray] = np.zeros_like(self.data) if self.requires_grad else None
-        
-        # This function will be populated by the op that creates this Tensor
-        self._backward = lambda: None
+            self.grad: Optional[np.ndarray] = np.zeros_like(self.data) if self.requires_grad else None
+            
+            self._backward = lambda: None
 
     @classmethod  
     def unbroadcast(cls, grad: np.ndarray, shape: Tuple[int, ...]) -> np.ndarray:
@@ -57,22 +55,20 @@ class Tensor:
         Returns:
             The unbroadcasted gradient.
         """
-        # 1. Sum away extra dimensions added by broadcasting
         while len(grad.shape) > len(shape):
             grad = grad.sum(axis=0)  
             
-        # 2. Sum along dimensions that were broadcasted (size 1)
         for i, (grad_dim, shape_dim) in enumerate(zip(grad.shape, shape)):
             if grad_dim != shape_dim:
                 if shape_dim == 1:
                     grad = grad.sum(axis=i, keepdims=True)
                 else:
-                    # This should not happen if broadcasting was valid
                     raise ValueError(f"Cannot unbroadcast shape {grad.shape} to {shape}")
         return grad
 
     def __repr__(self) -> str:
-        # Truncate data for cleaner printing
+        """ Print a Sting representation of a Tensor 
+        """ 
         data_str = np.array2string(self.data, max_line_width=70, precision=4, suppress_small=True)
         if '\n' in data_str:
             data_str = data_str.split('\n')[0] + '...]' # Show first line only if multi-line
@@ -85,7 +81,6 @@ class Tensor:
         if self.requires_grad:
             self.grad = np.zeros_like(self.data)
 
-    # --- Factory Methods ---
     
     @classmethod  
     def zeros(cls, *shape: int, requires_grad: bool = False) -> 'Tensor':
@@ -150,9 +145,12 @@ class Tensor:
             requires_grad = tensor.requires_grad
         return cls(np.ones_like(tensor.data), requires_grad=requires_grad)
 
-    # --- Basic Arithmetic Ops ---
 
     def __add__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':  
+        """ 
+        called when you try to add a Tensor to another Tensor , a float , int or numpy array, 
+        rember that addition operation just distribute the gradient to the parent nodes 
+        """
         other_val = other.data if isinstance(other, Tensor) else other
         children = (self, other) if isinstance(other, Tensor) else (self,)
         
@@ -178,6 +176,11 @@ class Tensor:
 
 
     def __mul__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':
+        """" 
+        called when you try to multiply a Tensor with another Tensor or float, int or a numpy arry, 
+        rember that the gradient of the childrent after this operation is the product of the gradient that comes out and the 
+        other data 
+        """
         other_val = other.data if isinstance(other, Tensor) else other
         children = (self, other) if isinstance(other, Tensor) else (self,)
         
@@ -202,6 +205,9 @@ class Tensor:
         return self.__matmul__(x) 
 
     def __pow__(self, other: Union[float, int]) -> 'Tensor':
+        """ 
+        called when you try to raise a Tensor with a float or a int , we only support those two :(
+        """
         assert isinstance(other, (float, int)), "Only support float and int power for Tensor"
         out = Tensor(self.data ** other, (self,), f'**{other}') 
         
@@ -213,17 +219,19 @@ class Tensor:
             out._backward = _backward
         return out
 
-    def __truediv__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':
+    def __truediv__(self, other: Union['Tensor', float, int, np.ndarray],eps:float = 1e-8) -> 'Tensor':
+        """ 
+        This is called when you try to divide a Tensor with another Tenosr or float, int or numpy array 
+        if require grad, when calculating the gradient using back propagation a small epison is added to avoid division by zero :) 
+        """
         other_val = other.data if isinstance(other, Tensor) else other
         children = (self, other) if isinstance(other, Tensor) else (self,)
-        
-        # Note: We don't add epsilon here; user is responsible for 0-division.
-        # Stability is added in log/sigmoid/softmax where it's unambiguous.
+
         out = Tensor(self.data / other_val, children, '/')
         
         def _backward():
             # Add epsilon to grad calculation to avoid 1/0
-            other_val_safe = other_val + 1e-8
+            other_val_safe = other_val + eps 
             if self.requires_grad:
                 self.grad += Tensor.unbroadcast((1 / other_val_safe) * out.grad, self.data.shape)
             if isinstance(other, Tensor) and other.requires_grad:
@@ -239,7 +247,6 @@ class Tensor:
     def __sub__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':
         return self + (other * -1)
 
-    # Reflected ops (for `5 + tensor`, etc.)
     def __radd__(self, other: Union[float, int, np.ndarray]) -> 'Tensor':
         return self + other
 
@@ -252,28 +259,52 @@ class Tensor:
     def __rtruediv__(self, other: Union[float, int, np.ndarray]) -> 'Tensor':
         return other * (self ** -1)
 
-    # --- Matrix/Reduction Ops ---
 
     def __matmul__(self, other: 'Tensor') -> 'Tensor':
-        assert isinstance(other, Tensor), "Only support Tensor type for matmul operation"
-        out = Tensor(self.data @ other.data, (self, other), '@')
-        
-        def _backward():
-            if self.requires_grad:
-                # (dL/dC) @ B^T
-                other_transposed = np.swapaxes(other.data, -1, -2)
-                self_grad_contrib = out.grad @ other_transposed
-                self.grad += Tensor.unbroadcast(self_grad_contrib, self.data.shape)
+            assert isinstance(other, Tensor), "Only support Tensor type for matmul operation"
             
-            if other.requires_grad:
-                # A^T @ (dL/dC)
-                self_transposed = np.swapaxes(self.data, -1, -2)
-                other_grad_contrib = self_transposed @ out.grad
-                other.grad += Tensor.unbroadcast(other_grad_contrib, other.data.shape)
-        
-        if out.requires_grad:
-            out._backward = _backward
-        return out
+            out = Tensor(self.data @ other.data, (self, other), '@')
+
+            def _backward():
+               if self.requires_grad:
+                    # CASE A: 'other' is a Matrix (2D+)
+                    if other.data.ndim > 1:
+                        other_transposed = np.swapaxes(other.data, -1, -2)
+                        self_grad_contrib = out.grad @ other_transposed
+                    
+                    # CASE B: 'other' is a Vector (1D)
+                    else:
+                        # If result is scalar (Vector @ Vector), simple scaling
+                        if out.grad.ndim == 0:
+                            self_grad_contrib = out.grad * other.data
+                        # If result is vector (Matrix @ Vector), outer product
+                        else:
+                            self_grad_contrib = np.outer(out.grad, other.data)
+
+                    self.grad += Tensor.unbroadcast(self_grad_contrib, self.data.shape)
+
+               if other.requires_grad:
+                    # CASE A: 'self' is a Matrix (2D+)
+                    if self.data.ndim > 1:
+                        self_transposed = np.swapaxes(self.data, -1, -2)
+                        other_grad_contrib = self_transposed @ out.grad
+                    
+                    # CASE B: 'self' is a Vector (1D)
+                    else:
+                        # If result is scalar (Vector @ Vector), simple scaling
+                        if out.grad.ndim == 0:
+                            other_grad_contrib = out.grad * self.data
+                        # If result is vector (Vector @ Matrix), outer product
+                        else:
+                            # Note: This case (Vector @ Matrix) usually results in a vector,
+                            # requiring the outer product of self and grad.
+                            other_grad_contrib = np.outer(self.data, out.grad)
+
+                    other.grad += Tensor.unbroadcast(other_grad_contrib, other.data.shape)
+
+            if out.requires_grad:
+                out._backward = _backward
+            return out 
 
     def sum(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims: bool = False) -> 'Tensor':
         out_data = np.sum(self.data, axis=axis, keepdims=keepdims)
@@ -281,13 +312,9 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                # The gradient needs to be broadcasted back to the original shape
                 if axis is None:
-                    # Scalar sum, grad is repeated across all elements
                     grad_expanded = np.ones_like(self.data) * out.grad
                 else:
-                    # Sum along axis, grad is repeated along that axis
-                    # We can use np.ones * expanded_grad for a general solution
                     if keepdims:
                         grad_to_expand = out.grad
                     else:
@@ -302,13 +329,12 @@ class Tensor:
         return out
 
     def mean(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims: bool = False) -> 'Tensor':
-        # Determine the number of elements being averaged over
         if axis is None:
-            n = self.data.size
-        elif isinstance(axis, int):
+            n = self.data.size # number of elements 
+        elif isinstance(axis, int): # number of elements in that axis 
             n = self.data.shape[axis]
         else: # axis is a tuple
-            n = np.prod([self.data.shape[i] for i in axis])
+            n = np.prod([self.data.shape[i] for i in axis]) # number of elements in the given axis 
         
         # Implement mean as sum * (1/n) so (1/n) is part of the graph
         sum_out = self.sum(axis=axis, keepdims=keepdims)
@@ -316,7 +342,6 @@ class Tensor:
         out._op = 'mean' # Override op label
         return out
         
-    # --- Unary Ops (Activations, etc.) ---
 
     def exp(self) -> 'Tensor':
         out_data = np.exp(self.data)
@@ -333,7 +358,7 @@ class Tensor:
     def log(self) -> 'Tensor':
         """Natural logarithm (ln)"""
         if not np.all(self.data > 0):
-            print("Warning: log applied to non-positive elements.")
+            warnings.warn("Log applied to non-positive elements",RuntimeWarning,stacklevel=2)
         
         out = Tensor(np.log(self.data), (self,), 'ln') 
         
@@ -359,10 +384,27 @@ class Tensor:
             out._backward = _backward
         return out
 
+    def clip(self, min_val: float, max_val: float) -> 'Tensor':
+        """
+        Clips the tensor values to be within [min_val, max_val].
+        """
+        out = Tensor(np.clip(self.data, min_val, max_val), (self,), 'clip')
+
+        def _backward():
+            if self.requires_grad:
+                mask = (self.data >= min_val) & (self.data <= max_val)
+                self.grad += out.grad * mask
+
+        if out.requires_grad:
+            out._backward = _backward
+            
+        return out
+
     def log10(self) -> 'Tensor':
         """Base-10 logarithm"""
         if not np.all(self.data > 0):
             print("Warning: log10 applied to non-positive elements.")
+            warnings.warn("Log10 applied to non-positive elements",RuntimeWarning,stacklevel=2)
         
         out = Tensor(np.log10(self.data), (self,), 'log10') 
         
@@ -375,7 +417,6 @@ class Tensor:
             out._backward = _backward
         return out
 
-    # --- Activation Functions ---
 
     def relu(self) -> 'Tensor':
         """ 
@@ -552,7 +593,6 @@ class Tensor:
             out._backward = _backward
         return out
 
-    # --- Reshaping/Indexing Ops ---
 
     def reshape(self, *new_shape: int) -> 'Tensor':
         """ 
@@ -576,7 +616,6 @@ class Tensor:
             out._backward = _backward
         return out
 
-    # --- Shape / size helpers ---
 
     @property
     def shape(self) -> Tuple[int, ...]:
@@ -593,10 +632,12 @@ class Tensor:
         """Number of dimensions of the tensor."""
         return int(self.data.ndim)
 
+    @property
     def numel(self) -> int:
         """PyTorch-style alias for the total number of elements in the tensor."""
         return int(self.data.size)
 
+    @property
     def dim(self) -> int:
         """PyTorch-style alias for the number of dimensions of the tensor."""
         return int(self.data.ndim)
@@ -608,11 +649,8 @@ class Tensor:
         This is a non-differentiable operation and will detach
         the new tensor from the computation graph.
         """
-        # We use .data to get the numpy array and .astype() to cast it
         bool_data = self.data.astype(bool)
         
-        # Create a new *leaf* Tensor with no gradient history.
-        # This is correct because the operation is not differentiable.
         out = Tensor(bool_data, requires_grad=False)
         return out
     
@@ -699,9 +737,9 @@ class Tensor:
             keepdims: Whether to keep the reduced dimensions.
         """
         # Compute mean along the given axis.
-        mean = self.mean(axis=axis, keepdims=True)
-        diff = self - mean
-        sq_diff = diff ** 2
+        mean = self.mean(axis=axis, keepdims=True) # mu 
+        diff = self - mean # (x_i - mu)  
+        sq_diff = diff ** 2 # (x_i - mu)**2 
 
         # Number of elements along the reduction axes
         if axis is None:
@@ -713,7 +751,7 @@ class Tensor:
 
         # Use sample variance (N - 1 in the denominator) with a safe minimum of 1
         denom = max(n - 1, 1)
-        var = sq_diff.sum(axis=axis, keepdims=keepdims) / denom
+        var = sq_diff.sum(axis=axis, keepdims=keepdims) / denom  # sum(x_i - my)**2 / N 
         return var
     
     def std(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims: bool = True) -> 'Tensor':

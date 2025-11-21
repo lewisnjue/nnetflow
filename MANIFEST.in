@@ -1,4 +1,11 @@
 include README.md
+include RELEASE_NOTES_*.md
 include requirements.txt
-recursive-include chainflow *.py
+recursive-include nnetflow *.py
 recursive-include docs *
+recursive-include tests * 
+recursive-include examples * 
+global-exclude .DS_Store 
+global-exclude .git 
+global-exclude __pycache__ 
+global-exclude *.pyc 

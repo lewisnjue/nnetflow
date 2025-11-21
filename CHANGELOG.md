@@ -1,6 +1,19 @@
 # Changelog
 
 All notable changes to this project are documented in this file.
+##[2.0.4] - 2025-11-21 
+
+### Fixed 
+- **Numerical Stability**: `cross_entropy_loss` now uses `log_sofmax` internally to prevent underflow. 
+- **Numerical Stability**: ``binary_cross_entropy_loss` now clamps predictions ( default eps=1e-7) to prevent `NaN` on exact 0/1 inputs 
+- **Gradient Correctness**:  Fixed inconsistent eplison handing in division backward pass. 
+- **BatchNorm**: `BatchNorm1d.parameters()` now correctly returns an empty list when `affine = False` 
+- **Packaging**: `MANIFEST.in` now correctly includes `nnetflow` assets  
+- **Cleanup**: Removed duplicate imports and stale code in `layers.py` 
+
+### Changed 
+- **Logging**: `Tensor.log()` and `Tensor.log10()` now raise `RuntimeWarning` instead of printing 
+- **API`**: Resolved naming conflicts between Tensor helper methods and numpy API 
 
 
 ## [2.0.3] - 2025-11-15

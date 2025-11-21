@@ -2,6 +2,7 @@
 import numpy as np
 from nnetflow.engine import Tensor
 import pytest
+import torch 
 
 
 class TestTensorBasic:
@@ -42,8 +43,8 @@ class TestTensorBasic:
         assert t.ndim == data.ndim
 
         # Method-style helpers
-        assert t.numel() == data.size
-        assert t.dim() == data.ndim
+        assert t.numel == data.size
+        assert t.dim == data.ndim
 
 
 class TestTensorArithmetic:
@@ -296,13 +297,17 @@ class TestTensorMatmul:
     
     def test_matmul_backward(self):
         """Test matrix multiplication backward pass."""
-        a = Tensor([[1.0, 2.0]], requires_grad=True)
-        b = Tensor([[3.0], [4.0]], requires_grad=True)
-        
-        c = a @ b
-        c.backward()
-        
-        # Gradient shapes should match
-        assert a.grad.shape == a.shape
-        assert b.grad.shape == b.shape
+        a_data = np.array([1.0,2.0])
+        b_data = np.array([[3.0],[4.0]]) 
+        a_t = Tensor(a_data,requires_grad=True) 
+        b_t = Tensor(b_data,requires_grad=True) 
+        c_t  = a_t @ b_t 
+        c_t.backward()
+        a_p = torch.tensor(a_data,requires_grad=True)
+        b_p = torch.tensor(b_data,requires_grad=True)
+        c_p = a_p @ b_p  
+        c_p.backward() 
 
+        np.testing.assert_allclose(a_t.grad, a_p.grad.numpy(), rtol=1e-5)
+        
+        np.testing.assert_allclose(b_t.grad, b_p.grad.numpy(), rtol=1e-5)
