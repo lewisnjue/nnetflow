@@ -1,8 +1,88 @@
 """Tests for Tensor engine and autograd operations."""
 import numpy as np
 from nnetflow.engine import Tensor
+from nnetflow.layers import Linear, BatchNorm1d, LayerNorm 
 import pytest
 import torch 
+
+class TestTensorBroadcasting: 
+    """Test whehter broadcasting is working as expected""" 
+    def test_unbroadcast_method(self): 
+        grad = np.random.randn(3,4,5)  
+        shape = (4,5) 
+        assert Tensor.unbroadcast(grad,shape).shape == shape
+        grad_bad = np.random.randn(3,4,5) 
+        shape_bad = ( 2,7,2) 
+        with pytest.raises(ValueError): 
+            Tensor.unbroadcast(grad_bad,shape_bad)  
+
+class TestGrad:
+    """ Test gradient Tensor properties and zero_grad method.""" 
+    def test_grad_initialization(self): 
+        a = Tensor([1.0,2.0,3.0],requires_grad=True) 
+        assert a.requires_grad == True 
+        assert a.grad is not None 
+        assert a.grad.shape == a.data.shape 
+        assert a.grad.dtype == a.data.dtype 
+        assert a.grad.sum() == 0.0  
+        assert np.allclose(a.grad, np.zeros_like(a.data)) 
+
+class TestTesnorDtype:
+    """Tests for dtype support across Tensor and Layers."""
+
+    def test_astype_returns_new_tensor(self): 
+        t = Tensor([1.0, 2.0, 3.0], dtype=np.float32)
+        t2 = t.astype(np.float64)
+        assert t2.dtype == np.float64
+        assert t.dtype == np.float32 
+        assert t2 is not t 
+
+    def test_tensor_default_dtype_is_float64(self):
+        t = Tensor([1.0, 2.0, 3.0])
+        assert t.dtype == np.float64
+
+    def test_could_not_convert_data_to_tensor(self):
+        with pytest.raises(TypeError):
+            Tensor("invalid data type")
+
+    def test_tensor_preserve_requested_dtype(self):
+        a = np.array([1.0, 2.0], dtype=np.float32)
+        t = Tensor(a, dtype=np.float32)
+        assert t.dtype == np.float32
+
+        b = np.array([1.0, 2.0], dtype=np.float64)
+        t2 = Tensor(b, dtype=np.float64)
+        assert t2.dtype == np.float64
+
+
+    def test_operation_dtype_propagation_float32(self):
+        a = Tensor(np.array([1.0, 2.0], dtype=np.float32))
+        b = Tensor(np.array([3.0, 4.0], dtype=np.float32))
+        c = a + b
+        assert c.dtype == np.float32
+
+
+    def test_linear_forward_preserves_dtype(self):
+        layer = Linear(3, 2, dtype=np.float32)
+        x = Tensor(np.random.randn(4, 3).astype(np.float32))
+        out = layer(x)
+        assert out.dtype == np.float32
+
+
+    def test_batchnorm_dtype_and_running_stats(self):
+        bn = BatchNorm1d(5)
+        x = Tensor(np.random.randn(3, 5).astype(np.float32))
+        out = bn(x)
+        assert out.dtype == np.float32
+        assert bn.running_mean.data.dtype == np.float32
+
+
+    def test_layernorm_preserves_dtype(self):
+        ln = LayerNorm(dim=6)
+        x = Tensor(np.random.randn(2, 6).astype(np.float32))
+        out = ln(x)
+        assert out.dtype == np.float32
+
 
 
 class TestTensorBasic:

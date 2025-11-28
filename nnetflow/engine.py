@@ -5,6 +5,9 @@ from typing import Union, Tuple, Optional, Set
 
 import scipy.special as sp 
 
+
+
+
 class Tensor:
     """
     A simple autograd Tensor class supporting dynamic computation graphs
@@ -21,24 +24,19 @@ class Tensor:
         Args:
         data: the data for which to create tensor with 
         dtype: the datatype of the Tensor (e.g. np.float32, np.int8). 
-            If None, defaults to float32.
+            If None, defaults to float64. :😞, i will change later (that not good for deep learning)
         _children: Tuple of the tensors that created this tensor 
         _op: the operation that created this tensor 
         requires_grad: bool of if the Tensor requires gradient tracking 
         """
-        # Determine target dtype: explicit `dtype` wins; otherwise default to float32
         # Priority: explicit `dtype` argument > ndarray's dtype > default float64
         if dtype is not None:
             target_dtype = np.dtype(dtype)
         elif isinstance(data, np.ndarray):
             target_dtype = data.dtype
         else:
-            # Use float64 as default to preserve numerical precision for tests
-            target_dtype = np.float64
+            target_dtype = np.float64 # 😞 this is poor i will change later 
 
-        # Convert/astype data to the target dtype. This ensures a consistent
-        # default dtype across the library while still allowing callers to
-        # request a specific dtype via the `dtype` argument.
         if isinstance(data, np.ndarray):
             try:
                 self.data = data.astype(target_dtype)
@@ -51,13 +49,13 @@ class Tensor:
             except Exception as e:
                 raise TypeError(f"Could not convert data to Tensor. Error: {e}")
         self._op = _op
-        self._prev: Set['Tensor'] = set(c for c in _children if isinstance(c, Tensor))
+        self._prev: Set['Tensor'] = set(c for c in _children if isinstance(c, Tensor)) # this is one of the limitation 😞 
         if requires_grad is None:
             self.requires_grad = any(c.requires_grad for c in self._prev)
         else:
             self.requires_grad = bool(requires_grad)
         if self.requires_grad:
-            grad_dtype = np.float32 if self.data.dtype not in [np.float64, np.float32] else self.data.dtype
+            grad_dtype = np.float64 if self.data.dtype not in [np.float64, np.float32] else self.data.dtype
             self.grad: Optional[np.ndarray] = np.zeros(self.data.shape, dtype=grad_dtype)
         else:
             self.grad = None
@@ -78,14 +76,14 @@ class Tensor:
         Returns:
             A new Tensor with the specified dtype
         """
-        new_data = self.data.astype(dtype)
-        # Create new tensor without gradient tracking to avoid graph issues
+        new_data = self.data.astype(dtype) # this is a copy not the original one that cool 😎
         new_tensor = Tensor(new_data, requires_grad=self.requires_grad)
         return new_tensor
     
     def astype(self, dtype: npt.DTypeLike) -> 'Tensor':
         """
         Alias for .to() method. Casts the tensor to a specified dtype.
+        Rember that it return a new Tensor not modify the original one. This is not efficient but ok for now  😞
         
         Args:
             dtype: Target data type (e.g., np.float32, np.float16, np.int32)
@@ -116,7 +114,8 @@ class Tensor:
         return grad
 
     def __repr__(self) -> str:
-        """ Print a Sting representation of a Tensor 
+        """
+          Print a Sting representation of a Tensor 
         """ 
         data_str = np.array2string(self.data, max_line_width=70, precision=4, suppress_small=True)
         if '\n' in data_str:
@@ -127,7 +126,7 @@ class Tensor:
     def zero_grad(self) -> None:
         """Resets the gradient of this tensor to zero."""
         if self.requires_grad:
-            grad_dtype = np.float32 if self.data.dtype not in [np.float64, np.float32] else self.data.dtype
+            grad_dtype = np.float64 if self.data.dtype not in [np.float64, np.float32] else self.data.dtype
             self.grad = np.zeros_like(self.data,dtype=grad_dtype)
 
     
@@ -198,7 +197,7 @@ class Tensor:
         if requires_grad is None:
             requires_grad = tensor.requires_grad
         return cls(np.ones_like(tensor.data), requires_grad=requires_grad,dtype=dtype)
-
+#---- start from here --- 
     def __add__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':  
         """ 
         called when you try to add a Tensor to another Tensor  a float , int or numpy array 
