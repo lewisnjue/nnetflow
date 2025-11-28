@@ -1,7 +1,7 @@
 import numpy as np 
 from nnetflow.engine import Tensor 
 from typing import Union, List, Tuple, Optional, Dict, Any
-
+import numpy.typing as npt
 
 class Linear:
     """
@@ -9,7 +9,7 @@ class Linear:
     it perform the following mathematical calculation: 
     out_put = input @ weight + bias 
     """
-    def __init__(self,in_features:int, out_features:int,bias = True) -> None: 
+    def __init__(self,in_features:int, out_features:int,bias = True,dtype:Optional[npt.DTypeLike] = None) -> None: 
         """ 
         Args: 
             in_features: this is the number of features in your input tensor 
@@ -23,10 +23,10 @@ class Linear:
         self.out_features = out_features 
         _weight = np.random.randn(in_features, out_features) * np.sqrt(2. / in_features) 
         _bias = np.zeros((1, out_features)) 
-        self.weight = Tensor(_weight, requires_grad=True)
+        self.weight = Tensor(_weight, requires_grad=True,dtype=dtype)
         self.has_bias = bias
         if bias:
-            self.bias = Tensor(_bias, requires_grad=True)
+            self.bias = Tensor(_bias, requires_grad=True,dtype=dtype)
     
     def __call__(self,x:Tensor) -> Tensor:
         """ 
@@ -76,7 +76,7 @@ class Conv2d:
     Link to the paper : https://arxiv.org/abs/1511.08458
     """
 
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0, bias: bool = True) -> None:
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0, bias: bool = True,dtype:Optional[npt.DTypeLike] = None) -> None:
         """
         Args:
             in_channels: Number of input channels.
@@ -94,18 +94,19 @@ class Conv2d:
         self.stride = stride
         self.padding = padding
         self.has_bias = bias
+        self.dtype = dtype
 
         fan_in = in_channels * kernel_size * kernel_size
         _weight = np.random.randn(
             out_channels, in_channels, kernel_size, kernel_size) * np.sqrt(2. / fan_in)
         
   
-        self.weight = Tensor(_weight, requires_grad=True)
+        self.weight = Tensor(_weight, requires_grad=True,dtype=dtype)
 
         if self.has_bias:
 
             _bias = np.zeros((1, out_channels))
-            self.bias = Tensor(_bias, requires_grad=True)
+            self.bias = Tensor(_bias, requires_grad=True,dtype=dtype)
         else:
             self.bias = None
 
@@ -244,7 +245,7 @@ class Conv1d:
     Input format: (batch_size, in_channels, length)
     Link to the paper : https://arxiv.org/abs/1511.08458
     """
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0, bias: bool = True) -> None:
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0, bias: bool = True, dtype: Optional[npt.DTypeLike] = None) -> None:
         """
         Args:
             in_channels: Number of input channels.
@@ -264,11 +265,11 @@ class Conv1d:
         fan_in = in_channels * kernel_size
         _weight = np.random.randn(
             out_channels, in_channels, kernel_size) * np.sqrt(2. / fan_in)
-        self.weight = Tensor(_weight, requires_grad=True)
+        self.weight = Tensor(_weight, requires_grad=True,dtype=dtype)
 
         if self.has_bias:
             _bias = np.zeros((1, out_channels))
-            self.bias = Tensor(_bias, requires_grad=True)
+            self.bias = Tensor(_bias, requires_grad=True, dtype=dtype)
         else:
             self.bias = None
 
@@ -438,6 +439,15 @@ class BatchNorm1d:
          x normalized
         """
         orig_shape = x.shape
+        # Ensure parameters run in the same dtype as the input to avoid
+        # upcasting during arithmetic. If parameters were initialized with a
+        # different dtype (e.g., float64) we cast them to the input dtype.
+        target_dtype = x.data.dtype
+        if self.gamma.data.dtype != target_dtype:
+            self.gamma.data = self.gamma.data.astype(target_dtype)
+            self.beta.data = self.beta.data.astype(target_dtype)
+            self.running_mean.data = self.running_mean.data.astype(target_dtype)
+            self.running_var.data = self.running_var.data.astype(target_dtype)
         if len(x.shape) == 3:
             x = x.reshape((-1, x.shape[-1]))
         
@@ -507,6 +517,12 @@ class LayerNorm:
         self.beta = Tensor(np.zeros((1, dim)), requires_grad=True)
 
     def __call__(self, x: Tensor) -> Tensor: 
+        # Match parameter dtype to input dtype to avoid upcasting
+        target_dtype = x.data.dtype
+        if self.gamma.data.dtype != target_dtype:
+            self.gamma.data = self.gamma.data.astype(target_dtype)
+            self.beta.data = self.beta.data.astype(target_dtype)
+
         mean = x.mean(axis=-1, keepdims=True)  # Shape: (..., 1)
         var = ((x - mean) ** 2).mean(axis=-1, keepdims=True)  # Shape: (..., 1)
         
@@ -526,7 +542,7 @@ class Embedding:
     Creates an embedding layer 
     """ 
 
-    def __init__(self, num_embeddings: int, embedding_dim: int) -> None: 
+    def __init__(self, num_embeddings: int, embedding_dim: int, dtype: Optional[npt.DTypeLike] = None) -> None:
         """ 
         Args: 
             num_embeddings: number of embeddings you want to create 
@@ -537,7 +553,7 @@ class Embedding:
         self.num_embeddings = num_embeddings 
         self.embedding_dim = embedding_dim  
         weight = np.random.randn(num_embeddings, embedding_dim) * 0.01  
-        self.weight = Tensor(weight, requires_grad=True) 
+        self.weight = Tensor(weight, requires_grad=True,dtype=dtype) 
     
     def __call__(self, indices: Union[int, slice, tuple]) -> Tensor:
         embedded = self.weight[indices]
@@ -910,7 +926,7 @@ class RNN:
           input feature size inferred on the first forward pass.
     """
 
-    def __init__(self, n_neurons: int = 1, return_sequence: bool = False) -> None:
+    def __init__(self, n_neurons: int = 1, return_sequence: bool = False, dtype: Optional[npt.DTypeLike] = None) -> None:
         """ 
         Args:
             n_neurons: Number of hidden units in this RNN layer.
@@ -921,6 +937,7 @@ class RNN:
         """
         self.n_neurons = n_neurons
         self.return_sequence = return_sequence
+        self.dtype = dtype
 
         # Parameters will be lazily initialized on the first forward pass
         # once we know the input feature dimension.
@@ -937,9 +954,9 @@ class RNN:
         Whh = np.random.randn(self.n_neurons, self.n_neurons) * limit
         bh = np.zeros((1, self.n_neurons))
 
-        self.Wxh = Tensor(Wxh, requires_grad=True)
-        self.Whh = Tensor(Whh, requires_grad=True)
-        self.bh = Tensor(bh, requires_grad=True)
+        self.Wxh = Tensor(Wxh, requires_grad=True, dtype=self.dtype)
+        self.Whh = Tensor(Whh, requires_grad=True, dtype=self.dtype)
+        self.bh = Tensor(bh, requires_grad=True, dtype=self.dtype)
 
         self._initialized = True
 
