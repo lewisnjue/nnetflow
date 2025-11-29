@@ -138,6 +138,29 @@ class TestTensorArithmetic:
         c = a + b
         assert np.allclose(c.data, [4.0, 6.0])
     
+    def test_addition_backward(self):
+        """Test addition backward pass.""" 
+        a = np.random.randn(10,400,500) 
+        b = np.random.randn(10,400,500) 
+        a_n = Tensor(a,requires_grad=True,dtype=np.float16) 
+        b_n = Tensor(b,requires_grad=True,dtype=np.float16) 
+        c_n = a_n + b_n 
+        loss_n = c_n.sum() 
+        loss_n.backward() 
+        a_t = torch.tensor(a,requires_grad=True,dtype=torch.float16) 
+        b_t = torch.tensor(b,requires_grad=True,dtype=torch.float16) 
+        c_t = a_t + b_t 
+        loss_t = c_t.sum() 
+        loss_t.backward() 
+        np.testing.assert_allclose(a_n.grad, a_t.grad.numpy(),rtol=1e-3) 
+        np.testing.assert_allclose(b_n.grad, b_t.grad.numpy(),rtol=1e-3) 
+        assert c_n.dtype == np.float16 
+        assert b_n.dtype == np.float16 
+        assert a_n.dtype == np.float16
+        assert loss_n.dtype == np.float16   
+        assert loss_t.dtype == torch.float16  
+
+
     def test_multiplication(self):
         """Test multiplication operation."""
         a = Tensor([2.0, 3.0], requires_grad=True)
@@ -145,6 +168,48 @@ class TestTensorArithmetic:
         
         c = a * b
         assert np.allclose(c.data, [8.0, 15.0])
+    def test_multiplication_backward(self):
+        a = np.random.randn(10,400,500)  # B,T,C 
+        W = np.random.randn(10,400,500) # B,T,C
+        a_n = Tensor(a,requires_grad=True,dtype=np.float32) 
+        W_n = Tensor(W,requires_grad=True,dtype=np.float32) 
+        c_n = a_n * W_n 
+        loss_n = c_n.sum() 
+        loss_n.backward() 
+        a_t = torch.tensor(a,requires_grad=True,dtype=torch.float32) 
+        W_t = torch.tensor(W,requires_grad=True,dtype=torch.float32) 
+        c_t = a_t * W_t 
+        loss_t = c_t.sum() 
+        loss_t.backward() 
+        np.testing.assert_allclose(a_n.grad, a_t.grad.numpy(),rtol=1e-5) 
+        np.testing.assert_allclose(W_n.grad, W_t.grad.numpy(),rtol=1e-5) 
+        assert c_n.dtype == np.float32 
+        assert W_n.dtype == np.float32 
+        assert a_n.dtype == np.float32
+        assert loss_n.dtype == np.float32   
+        assert loss_t.dtype == torch.float32
+    
+    def test_tensor_power(self):
+        """ Test power operation."""
+        a = np.random.randn(10,400,500) # that massive  :( 
+        a_n = Tensor(a,requires_grad=True,dtype=np.float32) 
+        c_n = a_n ** 3.0  
+        a_t = torch.tensor(a,requires_grad=True,dtype=torch.float32) 
+        c_t = a_t ** 3.0 
+        np.testing.assert_allclose(c_n.data, c_t.detach().numpy(),rtol=1e-5) 
+    
+    def test_tensor_power_backward(self): 
+        """ Test power backward operation."""
+        a = np.random.randn(10,400,500)  
+        a_n = Tensor(a,requires_grad=True,dtype=np.float32) 
+        c_n = a_n ** 3.0  
+        loss_n = c_n.sum() 
+        loss_n.backward() 
+        a_t = torch.tensor(a,requires_grad=True,dtype=torch.float32) 
+        c_t = a_t ** 3.0 
+        loss_t = c_t.sum() 
+        loss_t.backward() 
+        np.testing.assert_allclose(a_n.grad, a_t.grad.numpy(),rtol=1e-5)
     
     def test_division(self):
         """Test division operation."""
@@ -153,7 +218,35 @@ class TestTensorArithmetic:
         
         c = a / b
         assert np.allclose(c.data, [3.0, 2.0])
+    def test_division_backward(self): 
+        """ Test division backward operation."""
+        a = np.random.randn(10,400,500)  
+        b = np.random.randn(10,400,500) + 1.0  
+        a_n = Tensor(a,requires_grad=True,dtype=np.float32) 
+        b_n = Tensor(b,requires_grad=True,dtype=np.float32) 
+        c_n = a_n / b_n  
+        loss_n = c_n.sum() 
+        loss_n.backward() 
+        a_t = torch.tensor(a,requires_grad=True,dtype=torch.float32) 
+        b_t = torch.tensor(b,requires_grad=True,dtype=torch.float32) 
+        c_t = a_t / b_t 
+        loss_t = c_t.sum() 
+        loss_t.backward() 
+        np.testing.assert_allclose(a_n.grad, a_t.grad.numpy(),rtol=1e-5) 
+        np.testing.assert_allclose(b_n.grad, b_t.grad.numpy(),rtol=1e-5)
     
+    def test_matmul(self): 
+        """ Test matrix multplication operation."""
+        a  = np.random.randn(30,20,30,40) 
+        b = np.random.randn(40,50) 
+        a_n = Tensor(a,requires_grad=True,dtype=np.float32) 
+        b_n = Tensor(b,requires_grad=True,dtype=np.float32) 
+        c_n = a_n @ b_n  
+        a_t = torch.tensor(a,requires_grad=True,dtype=torch.float32) 
+        b_t = torch.tensor(b,requires_grad=True,dtype=torch.float32) 
+        c_t = a_t @ b_t 
+        np.testing.assert_allclose(c_n.data, c_t.detach().numpy(),rtol=1e-5,atol=0.001)
+
     def test_division_with_scalar(self):
         """Test division with scalar."""
         a = Tensor([6.0, 8.0], requires_grad=True)

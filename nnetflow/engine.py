@@ -197,7 +197,7 @@ class Tensor:
         if requires_grad is None:
             requires_grad = tensor.requires_grad
         return cls(np.ones_like(tensor.data), requires_grad=requires_grad,dtype=dtype)
-#---- start from here --- 
+
     def __add__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':  
         """ 
         called when you try to add a Tensor to another Tensor  a float , int or numpy array 
@@ -205,7 +205,7 @@ class Tensor:
         other_val = other.data if isinstance(other, Tensor) else other
         children = (self, other) if isinstance(other, Tensor) else (self,)
         
-        out = Tensor(self.data + other_val, children, '+') # numy will take care of datatype
+        out = Tensor(self.data + other_val, children, '+') 
         
         def _backward():
             if self.requires_grad:
@@ -270,7 +270,7 @@ class Tensor:
             out._backward = _backward
         return out
 
-    def __truediv__(self, other: Union['Tensor', float, int, np.ndarray],eps:float = 1e-8) -> 'Tensor':
+    def __truediv__(self, other: Union['Tensor', float, int, np.ndarray],eps:float = 1e-8,use_tor:bool  = False) -> 'Tensor':
         """ 
         This is called when you try to divide a Tensor with another Tenosr or float, int or numpy array 
         if require grad, when calculating the gradient using back propagation a small epison is added to avoid division by zero :) 
@@ -281,8 +281,11 @@ class Tensor:
         out = Tensor(self.data / other_val, children, '/')
         
         def _backward():
-            # Add epsilon to grad calculation to avoid 1/0
-            other_val_safe = other_val + eps 
+            if use_tor: 
+                other_val_safe = other_val + eps 
+            else:
+                other_val_safe = other_val 
+
             if self.requires_grad:
                 self.grad += Tensor.unbroadcast((1 / other_val_safe) * out.grad, self.data.shape)
             if isinstance(other, Tensor) and other.requires_grad:
@@ -310,9 +313,32 @@ class Tensor:
     def __rtruediv__(self, other: Union[float, int, np.ndarray]) -> 'Tensor':
         return other * (self ** -1)
 
+    @classmethod 
+    def can_matmul(cls,shape_a, shape_b):
+        """ used to check if two shapes can be matrix multiplied together"""
+        ndim_a, ndim_b = len(shape_a), len(shape_b)
+        if ndim_a == 0 or ndim_b == 0:
+            return False 
+        dim_inner_a = shape_a[-1]
+        dim_inner_b = shape_b[-2] if ndim_b > 1 else shape_b[0]
+        
+        if dim_inner_a != dim_inner_b:
+            return False
+        batch_shape_a = shape_a[:-1] if ndim_a == 1 else shape_a[:-2]
+        batch_shape_b = shape_b[:-1] if ndim_b == 1 else shape_b[:-2]
+        try:
+            np.broadcast_shapes(batch_shape_a, batch_shape_b)
+            return True
+        except ValueError:
+            return False
+
+
 
     def __matmul__(self, other: 'Tensor') -> 'Tensor':
             assert isinstance(other, Tensor), "Only support Tensor type for matmul operation"
+            can_matmul = Tensor.can_matmul(self.data.shape, other.data.shape) 
+            if not can_matmul:
+                raise ValueError(f"Shapes {self.data.shape} and {other.data.shape} not aligned for matmul") 
             
             out = Tensor(self.data @ other.data, (self, other), '@')
 
@@ -356,10 +382,10 @@ class Tensor:
             if out.requires_grad:
                 out._backward = _backward
             return out 
-
+# -- start from here -- 
     def sum(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims: bool = False) -> 'Tensor':
         out_data = np.sum(self.data, axis=axis, keepdims=keepdims)
-        out = Tensor(out_data, (self,), 'sum')
+        out = Tensor(out_data, (self,), 'sum',dtype=self.data.dtype)
         
         def _backward():
             if self.requires_grad:
