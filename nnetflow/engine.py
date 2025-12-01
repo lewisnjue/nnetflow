@@ -382,21 +382,20 @@ class Tensor:
             if out.requires_grad:
                 out._backward = _backward
             return out 
-# -- start from here -- 
+ 
     def sum(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims: bool = False) -> 'Tensor':
         out_data = np.sum(self.data, axis=axis, keepdims=keepdims)
         out = Tensor(out_data, (self,), 'sum',dtype=self.data.dtype)
         
         def _backward():
             if self.requires_grad:
-                if axis is None:
+                if axis is None: # in this case only one number is in the out `Tensor`
                     grad_expanded = np.ones_like(self.data) * out.grad
                 else:
                     if keepdims:
-                        grad_to_expand = out.grad
+                        grad_to_expand = out.grad 
                     else:
                         grad_to_expand = np.expand_dims(out.grad, axis=axis)
-                    
                     grad_expanded = np.ones_like(self.data) * grad_to_expand
                 
                 self.grad += grad_expanded
@@ -407,16 +406,15 @@ class Tensor:
 
     def mean(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims: bool = False) -> 'Tensor':
         if axis is None:
-            n = self.data.size # number of elements 
-        elif isinstance(axis, int): # number of elements in that axis 
+            n = self.data.size 
+        elif isinstance(axis, int): 
             n = self.data.shape[axis]
-        else: # axis is a tuple
-            n = np.prod([self.data.shape[i] for i in axis]) # number of elements in the given axis 
-        
-        # Implement mean as sum * (1/n) so (1/n) is part of the graph
+        else: 
+            n = np.prod([self.data.shape[i] for i in axis])         
+
         sum_out = self.sum(axis=axis, keepdims=keepdims)
-        out = sum_out * (1.0 / n) # This creates a Mul node
-        out._op = 'mean' # Override op label
+        out = sum_out * (1.0 / n) 
+        out._op = 'mean'
         return out
         
 
@@ -431,7 +429,7 @@ class Tensor:
         if out.requires_grad:
             out._backward = _backward
         return out
-
+# -- start from here 
     def log(self) -> 'Tensor':
         """Natural logarithm (ln)"""
         if not np.all(self.data > 0):

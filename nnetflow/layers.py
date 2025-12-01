@@ -15,9 +15,9 @@ class Linear:
             in_features: this is the number of features in your input tensor 
             out_features: this is the number of neuron to create  which are all fully connected to the in_features 
             bias: if true , bias is added if not it is not 
+            dtype: the data type of the weights and bias tensors 
         Returns: 
             None 
-
         """
         self.in_features = in_features 
         self.out_features = out_features 
@@ -55,7 +55,6 @@ class Linear:
             return [self.weight, self.bias]
         else:
             return [self.weight]
- 
 
     def __repr__(self) -> str:
         """ 
