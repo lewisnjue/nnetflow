@@ -1,9 +1,10 @@
 import numpy as np 
 from nnetflow.engine import Tensor 
 from typing import Union, List, Tuple, Optional, Dict, Any
+from nnetflow.module import Module
 import numpy.typing as npt
 
-class Linear:
+class Linear(Module):
     """
     This class creates a Linear Layer. This is a dense layer 
     it perform the following mathematical calculation: 
@@ -1025,3 +1026,14 @@ class RNN:
     def __str__(self) -> str:
         return self.__repr__()
     
+
+class Gru(Module): 
+    pass # i will imprement later 
+
+class LSTM(Module): 
+    pass # i will imprement later 
+
+
+
+class MultiHeadAttention(Module):
+    pass # i will imprement later
