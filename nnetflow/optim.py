@@ -55,6 +55,19 @@ class Adam(Module):
     
     def forward(self, *args, **kwargs):
         return None 
+    
+
+    def state_dict(self, prefix=""):
+        state = {}
+        state[f"{prefix}.lr"] = self.lr 
+        state[f"{prefix}.beta1"] = self.beta1
+        state[f"{prefix}.beta2"] = self.beta2
+        state[f"{prefix}.eps"] = self.eps
+        state[f"{prefix}.t"] = self.t
+        for i, (m_i, v_i) in enumerate(zip(self.m, self.v)):
+            state[f"{prefix}.m.{i}"] = m_i.data
+            state[f"{prefix}.v.{i}"] = v_i.data
+        return state
 
     def step(self) -> None:
         """Apply one optimization step to all parameters with bias correction."""

@@ -85,6 +85,9 @@ class Module:
                     if isinstance(item, Module):
                         child_state = item.state_dict(prefix=f"{prefix}{name}.{i}.")
                         state.update(child_state)
+                    if isinstance(item, Tensor):
+                        key = f"{prefix}{name}.{i}"
+                        state[key] = item.data
         return state
     
     def load(self, filepath: str, weights_only=True) -> None:
