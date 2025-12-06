@@ -3,6 +3,7 @@ import numpy as np
 import time
 import gc
 from nnetflow.engine import Tensor
+from nnetflow.module import Module
 from nnetflow import layers
 from nnetflow import losses as nf_losses
 from nnetflow import optim as nf_optim
@@ -19,25 +20,21 @@ GPT_CONFIG_TINY = {
     "qkv_bias": False
 }
 
-class FeedForward:
+class FeedForward(Module):
     def __init__(self, cfg):
+        super().__init__()
         self.layers = [
             layers.Linear(cfg['emb_dim'], 4 * cfg['emb_dim']),
             layers.Linear(4 * cfg['emb_dim'], cfg['emb_dim'])
         ]
 
-    def __call__(self, x):
+    def forward(self, x):
         return self.layers[1](self.layers[0](x).gelu())
 
-    def parameters(self):
-        params = []
-        params.extend(self.layers[0].parameters())
-        params.extend(self.layers[1].parameters())
-        return params
 
-
-class MultiHeadAttention:
+class MultiHeadAttention(Module):
     def __init__(self, d_in, d_out, context_length, num_heads, dropout, qkv_bias=False):
+        super().__init__()
         assert d_out % num_heads == 0
         self.d_out = d_out
         self.num_heads = num_heads
@@ -50,7 +47,7 @@ class MultiHeadAttention:
         mask = np.triu(np.ones((context_length, context_length)), k=1)
         self.mask = Tensor(mask, requires_grad=False)
 
-    def __call__(self, x):
+    def forward(self, x):
         B, T, _ = x.shape
         Q = self.W_query(x)
         K = self.W_key(x)
@@ -71,17 +68,11 @@ class MultiHeadAttention:
         context = context.transpose((0, 2, 1, 3)).reshape(B, T, self.d_out)
         return self.out_proj(context)
 
-    def parameters(self):
-        params = []
-        params.extend(self.W_query.parameters())
-        params.extend(self.W_key.parameters())
-        params.extend(self.W_value.parameters())
-        params.extend(self.out_proj.parameters())
-        return params
 
+class TransformerBlock(Module):
 
-class TransformerBlock:
     def __init__(self, config):
+        super().__init__() 
         self.att = MultiHeadAttention(
             d_in=config['emb_dim'],
             d_out=config['emb_dim'],
@@ -95,13 +86,12 @@ class TransformerBlock:
         self.norm2 = layers.LayerNorm(dim=config['emb_dim'])
         self.drop_shortcut = layers.Dropout(config['drop_rate'])
 
-    def __call__(self, x):
+    def forward(self, x):
         shortcut = x
         x = self.norm1(x)
         x = self.att(x)
         x = self.drop_shortcut(x)
         x += shortcut
-
         shortcut = x
         x = self.norm2(x)
         x = self.ff(x)
@@ -109,17 +99,9 @@ class TransformerBlock:
         x += shortcut
         return x
 
-    def parameters(self):
-        params = []
-        params.extend(self.att.parameters())
-        params.extend(self.ff.parameters())
-        params.extend(self.norm1.parameters())
-        params.extend(self.norm2.parameters())
-        return params
-
-
-class GPT2:
+class GPT2(Module):
     def __init__(self, config):
+        super().__init__()
         self.config = config
         self.tok_emb = layers.Embedding(config['vocab_size'], config['emb_dim'])
         self.pos_emb = layers.Embedding(config['context_length'], config['emb_dim'])
@@ -128,17 +110,7 @@ class GPT2:
         self.final_norm = layers.LayerNorm(dim=config['emb_dim'])
         self.out_head = layers.Linear(config['emb_dim'], config['vocab_size'], bias=False)
 
-    def parameters(self):
-        params = []
-        params.extend(self.tok_emb.parameters())
-        params.extend(self.pos_emb.parameters())
-        params.extend(self.final_norm.parameters())
-        params.extend(self.out_head.parameters())
-        for block in self.trf_blocks:
-            params.extend(block.parameters())
-        return params
-
-    def __call__(self, in_idx):
+    def forward(self, in_idx):
         if isinstance(in_idx, Tensor):
             in_idx = in_idx.data
         in_idx = np.asarray(in_idx, dtype=np.int64)
@@ -156,8 +128,7 @@ class GPT2:
         return logits
 
 
-# ----------------------------- Model & Data -----------------------------
-model = GPT2(GPT_CONFIG_TINY)
+model = GPT2(GPT_CONFIG_TINY).to(np.float16) # just for faster computation 
 print(f"Model parameter count: {sum(p.data.size for p in model.parameters()):,}")
 
 path = kagglehub.dataset_download("rakibulhasanshaon69/the-verdict-txt")
@@ -185,18 +156,18 @@ def get_batch(split='train'):
 
 def to_one_hot(targets_np, vocab_size):
     B, T = targets_np.shape
-    oh = np.zeros((B, T, vocab_size), dtype=np.float32)
+    oh = np.zeros((B, T, vocab_size), dtype=np.float16)
     oh[np.arange(B)[:, None], np.arange(T)[None, :], targets_np] = 1.0
-    return Tensor(oh, requires_grad=False)
+    return Tensor(oh, requires_grad=False, dtype=np.float16)
 
 
 def generate_text(model, start_tokens, max_tokens=100, temperature=0.8):
     context_length = GPT_CONFIG_TINY["context_length"]
-    model_input = list(start_tokens)[-context_length:]  # ← FIX 1: truncate initial context
+    model_input = list(start_tokens)[-context_length:] 
     generated = []
 
     for _ in range(max_tokens):
-        x = np.array(model_input, dtype=np.int64)[None, :]
+        x = np.array(model_input, dtype=np.int16)[None, :]
         logits = model(x)
         next_logits = logits[0, -1, :].data / temperature
         next_logits -= np.max(next_logits)
@@ -213,7 +184,6 @@ def generate_text(model, start_tokens, max_tokens=100, temperature=0.8):
     return generated
 
 
-# ----------------------------- Training Loop -----------------------------
 lr = 1e-3
 grad_clip = 1.0
 max_epochs = 1000

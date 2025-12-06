@@ -6,3 +6,4 @@ tiktoken
 kagglehub
 torch
 pytest-cov
+matplotlib

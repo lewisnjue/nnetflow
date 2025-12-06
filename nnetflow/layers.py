@@ -1,6 +1,7 @@
 import numpy as np 
 from nnetflow.engine import Tensor 
 from typing import Union, List, Tuple, Optional, Dict, Any
+from nnetflow.init import initializers
 from nnetflow.module import Module
 import numpy.typing as npt
 
@@ -9,6 +10,7 @@ class Linear(Module):
     This class creates a Linear Layer. This is a dense layer 
     it perform the following mathematical calculation: 
     out_put = input @ weight + bias 
+    by default weights will be initalized using He uniform initialization 
     """
     def __init__(self,in_features:int, out_features:int,bias = True,dtype:Optional[npt.DTypeLike] = None) -> None: 
         """ 
@@ -22,14 +24,15 @@ class Linear(Module):
         """
         self.in_features = in_features 
         self.out_features = out_features 
-        _weight = np.random.randn(in_features, out_features) * np.sqrt(2. / in_features) 
+        _weight = np.random.randn(in_features, out_features) 
         _bias = np.zeros((1, out_features)) 
         self.weight = Tensor(_weight, requires_grad=True,dtype=dtype)
+        initializers.He_uniform(self.weight, nonlinearity='relu') 
         self.has_bias = bias
         if bias:
             self.bias = Tensor(_bias, requires_grad=True,dtype=dtype)
     
-    def __call__(self,x:Tensor) -> Tensor:
+    def forward(self,x:Tensor) -> Tensor:
         """ 
         This is the forward pass of the layer 
         Args: 
@@ -43,19 +46,6 @@ class Linear(Module):
              return x @ self.weight + self.bias 
         else:
             return x @ self.weight 
-    
-    def parameters(self):
-        """ 
-        returns the trainable parameters of the layer 
-        Args:
-            None 
-        Returns: 
-            List[Tensor,...] 
-        """ 
-        if self.has_bias:
-            return [self.weight, self.bias]
-        else:
-            return [self.weight]
 
     def __repr__(self) -> str:
         """ 
@@ -74,6 +64,7 @@ class Conv2d:
     Implements a 2D convolution layer for your autograd Tensor class.
     Input format: (batch_size, in_channels, height, width)
     Link to the paper : https://arxiv.org/abs/1511.08458
+    by default weights will be initialized using He normal initialization 
     """
 
     def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0, bias: bool = True,dtype:Optional[npt.DTypeLike] = None) -> None:
@@ -98,10 +89,10 @@ class Conv2d:
 
         fan_in = in_channels * kernel_size * kernel_size
         _weight = np.random.randn(
-            out_channels, in_channels, kernel_size, kernel_size) * np.sqrt(2. / fan_in)
+            out_channels, in_channels, kernel_size, kernel_size) 
         
-  
         self.weight = Tensor(_weight, requires_grad=True,dtype=dtype)
+        initializers.He_normal(self.weight, nonlinearity='relu')
 
         if self.has_bias:
 
@@ -128,7 +119,7 @@ class Conv2d:
             strides=(B_stride, C_stride, H_stride * S, W_stride * S, H_stride, W_stride)
         )
 
-    def __call__(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         """
         Performs the forward pass and builds the computation graph.
 
@@ -192,9 +183,6 @@ class Conv2d:
                     # Create a zero-padded array for the gradient
                     grad_x_padded = np.zeros_like(x_padded_data)
                     
-                    # ******** START OF FIX ********
-                    # We cannot use the strided view for a scatter-add.
-                    # We must loop manually.
                     for b in range(B):
                         for c in range(C_in):
                             for h in range(H_out):
@@ -205,7 +193,6 @@ class Conv2d:
                                     
                                     # Add the gradient from this patch
                                     grad_x_padded[b, c, h_start:h_end, w_start:w_end] += grad_patches[b, c, h, w, :, :]
-                    # ******** END OF FIX ********
                     
                     # Un-pad the gradient to get dL/dx
                     if P > 0:
@@ -219,13 +206,6 @@ class Conv2d:
             out._backward = _backward
             
         return out
-
-    def parameters(self):
-        """Returns a list of parameters for this layer."""
-        if self.has_bias:
-            return [self.weight, self.bias]
-        else:
-            return [self.weight]
 
     def __repr__(self) -> str:
         return (f"Conv2d(in_channels={self.in_channels}, "
@@ -244,6 +224,7 @@ class Conv1d:
     Implements a 1D convolution layer for your autograd Tensor class.
     Input format: (batch_size, in_channels, length)
     Link to the paper : https://arxiv.org/abs/1511.08458
+    by default weights will be initialized using He normal initialization
     """
     def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0, bias: bool = True, dtype: Optional[npt.DTypeLike] = None) -> None:
         """
@@ -264,8 +245,9 @@ class Conv1d:
 
         fan_in = in_channels * kernel_size
         _weight = np.random.randn(
-            out_channels, in_channels, kernel_size) * np.sqrt(2. / fan_in)
+            out_channels, in_channels, kernel_size) 
         self.weight = Tensor(_weight, requires_grad=True,dtype=dtype)
+        initializers.He_normal(self.weight, nonlinearity='relu')
 
         if self.has_bias:
             _bias = np.zeros((1, out_channels))
@@ -289,7 +271,7 @@ class Conv1d:
             strides=(B_stride, C_stride, L_stride * S, L_stride)
         )
 
-    def __call__(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         """
         Performs the forward pass and builds the computation graph.
 
@@ -378,26 +360,19 @@ class Conv1d:
             
         return out
 
-    def parameters(self):
-        """Returns a list of parameters for this layer."""
-        if self.has_bias:
-            return [self.weight, self.bias]
-        else:
-            return [self.weight]
-
     def __repr__(self) -> str:
-        return (f"Conv1d(in_channels={self.in_channels}, "
-                f"out_channels={self.out_channels}, "
-                f"kernel_size={self.kernel_size}, "
-                f"stride={self.stride}, "
-                f"padding={self.padding}, "
-                f"bias={self.has_bias})")
+            return (f"Conv1d(in_channels={self.in_channels}, "
+                    f"out_channels={self.out_channels}, "
+                    f"kernel_size={self.kernel_size}, "
+                    f"stride={self.stride}, "
+                    f"padding={self.padding}, "
+                    f"bias={self.has_bias})")
 
     def __str__(self):
         return self.__repr__()
 
 
-class BatchNorm1d:
+class BatchNorm1d(Module):
     """
     Batch Normalization layer that normalizes inputs across the batch dimension.
     Supports both training and evaluation modes.
@@ -431,7 +406,7 @@ class BatchNorm1d:
         self.running_mean = Tensor(np.zeros((1, num_features)), requires_grad=False)
         self.running_var = Tensor(np.ones((1, num_features)), requires_grad=False)
 
-    def __call__(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         """ 
         Args: 
             x: the input to be normalized 
@@ -474,12 +449,6 @@ class BatchNorm1d:
             
         return out
     
-    def parameters(self):
-        """ 
-        return the trainable parameters 
-        """ 
-        if self.affine:
-            return [self.gamma, self.beta]
 
     def __repr__(self) -> str:
         num_features = self.gamma.shape[1]
@@ -488,19 +457,8 @@ class BatchNorm1d:
     def __str__(self) -> str:
         return self.__repr__()
 
-    def train(self):
-        """ 
-        move Layer to training mode 
-        """ 
-        self.training = True
-    
-    def eval(self):
-        """ 
-        move layer to evaluation mode 
-        """ 
-        self.training = False
 
-class LayerNorm:
+class LayerNorm(Module):
     """ 
     This layer perform Layer normalization based on this paper  : https://arxiv.org/abs/1607.06450
     """ 
@@ -516,7 +474,7 @@ class LayerNorm:
         self.gamma = Tensor(np.ones((1, dim)), requires_grad=True)
         self.beta = Tensor(np.zeros((1, dim)), requires_grad=True)
 
-    def __call__(self, x: Tensor) -> Tensor: 
+    def forward(self, x: Tensor) -> Tensor: 
         # Match parameter dtype to input dtype to avoid upcasting
         target_dtype = x.data.dtype
         if self.gamma.data.dtype != target_dtype:
@@ -531,15 +489,10 @@ class LayerNorm:
         out = self.gamma * x_normalized + self.beta
         return out 
     
-    def parameters(self):
-        """ 
-        return trainable parameters of the layer 
-        """ 
-        return [self.gamma, self.beta]
-    
-class Embedding: 
+class Embedding(Module): 
     """ 
     Creates an embedding layer 
+    by default weights are initialized using He  normal 
     """ 
 
     def __init__(self, num_embeddings: int, embedding_dim: int, dtype: Optional[npt.DTypeLike] = None) -> None:
@@ -552,21 +505,17 @@ class Embedding:
         """ 
         self.num_embeddings = num_embeddings 
         self.embedding_dim = embedding_dim  
-        weight = np.random.randn(num_embeddings, embedding_dim) * 0.01  
+        weight = np.random.randn(num_embeddings, embedding_dim)  
         self.weight = Tensor(weight, requires_grad=True,dtype=dtype) 
+        initializers.He_normal(self.weight, nonlinearity='relu')
+
     
-    def __call__(self, indices: Union[int, slice, tuple]) -> Tensor:
+    def forward(self, indices: Union[int, slice, tuple]) -> Tensor:
         embedded = self.weight[indices]
         return embedded
 
-    def parameters(self):
-        """ 
-        return a list of Tensor trainable parameters 
-        """ 
-        return [self.weight]
 
-
-class Dropout: 
+class Dropout(Module): 
     """ 
     applies dropout based on this paper : https://arxiv.org/pdf/1904.13310
     """ 
@@ -582,7 +531,7 @@ class Dropout:
         self.p = p 
         self.training = training 
     
-    def __call__(self,x:Tensor) -> Tensor: 
+    def forward(self,x:Tensor) -> Tensor: 
         if self.training:
             mask = (np.random.rand(*x.shape) >= self.p).astype(np.float32) / (1.0 - self.p)
             return x * Tensor(mask, requires_grad=False)
@@ -595,25 +544,7 @@ class Dropout:
     def __str__(self) -> str:
         return self.__repr__()
 
-    def parameters(self):
-        """ 
-        return empty list because this layer dont hae trainable parameters 
-        """ 
-        return []
-        
-    def train(self):
-        """ 
-        set the model to training mode 
-        """ 
-        self.training = True
-    def eval(self):
-        """ 
-        set the model to evaluation mode  
-        """ 
-        self.training = False
-
-
-class Flatten:
+class Flatten(Module):
     """ 
     reshapes the tensor to shape of (batch_size,-1) 
     """  
@@ -623,7 +554,7 @@ class Flatten:
         """ 
         pass 
     
-    def __call__(self,x:Tensor) -> Tensor:
+    def forward(self,x:Tensor) -> Tensor:
         batch_size = x.shape[0]
         return x.reshape(batch_size, -1)
     
@@ -633,15 +564,6 @@ class Flatten:
     def __str__(self) -> str:
         return self.__repr__()
     
-    def parameters(self):
-        """ 
-        return empty list because this layer dont have any trainable parameters 
-        """ 
-        return []
-
-
-
-
 
 
 
@@ -655,7 +577,7 @@ def _to_pair(x: Union[int, Tuple[int, ...]]) -> Tuple[int, int]:
 
 
 
-class MaxPool2d:
+class MaxPool2d(Module):
     """
     Applies a 2D max pooling over an input tensor.
     Input format: (batch_size, in_channels, height, width)
@@ -671,7 +593,7 @@ class MaxPool2d:
 
         self.cache: Dict[str, Any] = {}
 
-    def __call__(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         """
         Performs the forward pass and builds the computation graph.
         """
@@ -777,16 +699,12 @@ class MaxPool2d:
             
         return out
 
-    def parameters(self):
-        """Max pooling has no learnable parameters."""
-        return []
-
     def __repr__(self) -> str:
         return (f"MaxPool2d(kernel_size={self.kernel_size}, "
                 f"stride={self.stride}, padding={self.padding})")
 
 
-class MaxPool1d:
+class MaxPool1d(Module):
     """
     Applies a 1D max pooling over an input tensor.
     Input format: (batch_size, in_channels, length)
@@ -803,7 +721,7 @@ class MaxPool1d:
         # Cache to store information for backward pass
         self.cache: Dict[str, Any] = {}
 
-    def __call__(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         """
         Performs the forward pass and builds the computation graph.
         """
@@ -905,9 +823,6 @@ class MaxPool1d:
             
         return out
 
-    def parameters(self):
-        """Max pooling has no learnable parameters."""
-        return []
 
     def __repr__(self) -> str:
         return (f"MaxPool1d(kernel_size={self.kernel_size}, "
@@ -915,7 +830,7 @@ class MaxPool1d:
 
 
 
-class RNN:
+class RNN(Module):
     """ 
     A simple RNN layer capable of handling sequential data.
 
@@ -960,7 +875,7 @@ class RNN:
 
         self._initialized = True
 
-    def __call__(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         """Perform the forward pass of the RNN.
 
         Args:
@@ -990,10 +905,8 @@ class RNN:
                 outputs.append(h_t)
 
         if self.return_sequence:
-            # Stack hidden states along the time dimension: (B, T, H)
             out_data = np.stack([h.data for h in outputs], axis=1)
             out = Tensor(out_data, _children=tuple(outputs), _op='RNNSequence')
-
             if out.requires_grad:
                 def _backward():
                     grad_out = out.grad  # (B, T, H)
@@ -1005,17 +918,8 @@ class RNN:
 
             return out
         else:
-            # Only return the final hidden state
             return h_t
 
-    def parameters(self) -> List[Tensor]:
-        """Return the trainable parameters of the RNN layer."""
-        if not self._initialized:
-            raise RuntimeError(
-                "RNN parameters are not initialized yet. "
-                "Call the layer with an input tensor before accessing parameters."
-            )
-        return [self.Wxh, self.Whh, self.bh]
 
     def __repr__(self) -> str:
         base = f"RNN(n_neurons={self.n_neurons}, return_sequence={self.return_sequence}"

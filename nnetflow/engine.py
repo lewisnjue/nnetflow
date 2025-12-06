@@ -61,6 +61,27 @@ class Tensor:
             self.grad = None
         self._backward = lambda: None
 
+    def __getstate__(self):
+        """
+        Called when pickling. We remove components that cannot (or should not) be saved.
+        """
+        state = self.__dict__.copy()
+        if '_backward' in state:
+            del state['_backward']
+        # Optional: Remove graph history to save space. 
+        # When saving a model, we usually treat weights as fresh leaf nodes.
+        # if '_prev' in state:
+        #     state['_prev'] = set()
+        
+        return state
+
+    def __setstate__(self, state):
+        """
+        Called when unpickling. We restore the state and re-initialize the missing lambda.
+        """
+        self.__dict__.update(state)
+        self._backward = lambda: None
+
     @property
     def dtype(self):
         """dtype property"""
@@ -68,7 +89,10 @@ class Tensor:
 
     def to(self, dtype: npt.DTypeLike) -> 'Tensor':
         """
-        Casts the tensor to a specified dtype.
+
+        Casts the tensor to a specified dtype. Note that the returned `Tensor` is detached to from teh original one and theirfore 
+        they are not the same thing , this is done intentinaly to prevent breaking the backward chain for example if you performed 
+        z = x + y and then you try to change the dtype of x 
         
         Args:
             dtype: Target data type (e.g., np.float32, np.float16, np.int32)
