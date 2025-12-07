@@ -1,17 +1,23 @@
-from .engine import Tensor
+from nnetflow.engine import Tensor
 from typing import List
-
-class SGD:
+from nnetflow.module import Module
+class SGD(Module):
     """Stochastic Gradient Descent optimizer with optional momentum."""
     def __init__(self, params: List[Tensor], lr: float = 0.01, momentum: float = 0.0) -> None:
         self.params = params
         self.lr = lr
         self.momentum = momentum
         self.velocities = [Tensor.zeros_like(p) for p in params]
+    
+
+    def forward(self, *args, **kwargs):
+        return None
 
     def step(self) -> None:
         """Apply one optimization step to all parameters."""
         for i, param in enumerate(self.params):
+            if param.requires_grad is False:
+                continue # just for safety because some will not require grad in training model like batchnorm layer :) 
             if param.grad is None:
                 continue
             if self.momentum > 0:
@@ -32,7 +38,7 @@ class SGD:
         return f"SGD Optimizer: lr={self.lr}, momentum={self.momentum}"
 
 
-class Adam:
+class Adam(Module):
     """
     Adam optimizer.
     link to the paper: https://arxiv.org/abs/1412.6980
@@ -46,11 +52,29 @@ class Adam:
         self.m = [Tensor.zeros_like(p) for p in params]
         self.v = [Tensor.zeros_like(p) for p in params]
         self.t = 0
+    
+    def forward(self, *args, **kwargs):
+        return None 
+    
+
+    def state_dict(self, prefix=""):
+        state = {}
+        state[f"{prefix}.lr"] = self.lr 
+        state[f"{prefix}.beta1"] = self.beta1
+        state[f"{prefix}.beta2"] = self.beta2
+        state[f"{prefix}.eps"] = self.eps
+        state[f"{prefix}.t"] = self.t
+        for i, (m_i, v_i) in enumerate(zip(self.m, self.v)):
+            state[f"{prefix}.m.{i}"] = m_i.data
+            state[f"{prefix}.v.{i}"] = v_i.data
+        return state
 
     def step(self) -> None:
         """Apply one optimization step to all parameters with bias correction."""
         self.t += 1
         for i, param in enumerate(self.params):
+            if param.requires_grad is False:
+                continue 
             if param.grad is None:
                 continue
             self.m[i].data = self.beta1 * self.m[i].data + (1 - self.beta1) * param.grad
