@@ -1,6 +1,46 @@
 # Changelog
 
 All notable changes to this project are documented in this file.
+
+## [2.0.5] - 2025-12-07
+
+### Added
+- **GPU Support**: Complete GPU support via CuPy with device abstraction module
+  - New `nnetflow.device` module for CPU/GPU management
+  - Automatic device detection and seamless switching
+  - Support for any CuPy version (cupy-cuda11x, cupy-cuda12x, etc.)
+  - GPU data type support checking (`gpu_supports_dtype()`)
+  - GPU information utilities (`get_gpu_count()`, `get_gpu_name()`)
+- **MultiHeadAttention Layer**: Full implementation of multi-head attention mechanism
+  - Causal masking for autoregressive models
+  - Configurable dropout, bias, and sequence length
+  - Optimized for both CPU and GPU
+  - Pre-computed mask option for performance
+- **Device-Aware Operations**: All Tensor operations now use device abstraction
+  - All layers work seamlessly on CPU and GPU
+  - Optimizers and losses are device-aware
+  - No NumPy/CuPy conflicts
+
+### Fixed
+- **Dtype Preservation**: Fixed dtype preservation in Tensor operations (`__add__`, `__matmul__`)
+  - Operations now maintain input dtype instead of defaulting to float64
+- **Layer Callability**: Fixed `Conv2d` and `Conv1d` to inherit from `Module`
+  - Both layers are now properly callable
+  - All 14 convolution tests now passing
+- **Test Failures**: Fixed all test failures (112/112 tests now passing)
+
+### Changed
+- **Examples**: Updated `gpt2.py` to automatically use GPU when available
+  - Automatic float16 support detection
+  - Device-aware data processing
+- **Initializers**: Updated to use device abstraction for GPU compatibility
+- **Codebase**: Comprehensive device abstraction throughout
+
+### Performance
+- GPU training support for significant speedup on large models
+- Automatic float16 support on compatible GPUs (A100, etc.)
+- Optimized operations using device-optimized backends
+
 ##[2.0.4] - 2025-11-21 
 
 ### Fixed 

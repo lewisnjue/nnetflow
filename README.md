@@ -12,7 +12,7 @@ Key design goals:
 - Small, focused feature set for learning (Linear layer, losses, optimizers)
 - Well-tested: unit tests exercise core pieces (Tensor, Linear, losses, optimizers)
 
-This repository represents the v2.0.4 release — a cleaned-up, documented, and tested baseline with bug fixes and improvements.
+This repository represents the v2.0.5 release — featuring GPU support via CuPy, Multi-Head Attention, and comprehensive device abstraction.
 
 ## Highlights
 

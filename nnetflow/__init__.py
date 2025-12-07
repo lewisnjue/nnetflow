@@ -27,9 +27,9 @@ except Exception:  # pragma: no cover
     PackageNotFoundError = Exception
 
 try:
-    __version__ = version("nnetflow") if version is not None else "2.0.4"
+    __version__ = version("nnetflow") if version is not None else "2.0.5"
 except PackageNotFoundError:
-    __version__ = "2.0.4"
+    __version__ = "2.0.5"
 
 __all__ = [
     'Tensor',
