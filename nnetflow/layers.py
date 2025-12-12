@@ -527,35 +527,30 @@ class Embedding(Module):
         return embedded
 
 
-class Dropout(Module): 
-    """ 
-    applies dropout based on this paper : https://arxiv.org/pdf/1904.13310
-    """ 
-    def __init__(self,p:float=0.5,training=True) ->None: 
-        """ 
-        Args: 
-            p: probability of droping a neuron 
-            training: if the Dropout layer is in training model 
-        Returns: 
-            None 
-        """ 
-        assert 0.0 <= p < 1.0 , "Dropout probability must be in [0.0,1.0] range" 
-        self.p = p 
-        self.training = training 
-    
-    def forward(self,x:Tensor) -> Tensor: 
-        if self.training:
-            xp = get_array_module()
-            mask = (xp.random.rand(*x.shape) >= self.p).astype(xp.float32) / (1.0 - self.p)
-            return x * Tensor(mask, requires_grad=False)
-        else:
-            return x
-    
-    def __repr__(self) -> str:
-        return f"Dropout(p={self.p}, training={self.training})"
+class Dropout(Module):
+    """
+    Applies Inverted Dropout.
+    During training, randomly zeroes some of the elements of the input tensor 
+    with probability p using samples from a Bernoulli distribution.
+    """
+    def __init__(self, p: float = 0.5) -> None:
+        """
+        Args:
+            p: probability of dropping a neuron (setting it to zero).
+        """
+        super().__init__() 
+        assert 0.0 <= p < 1.0, "Dropout probability must be in [0.0, 1.0) range"
+        self.p = p
 
-    def __str__(self) -> str:
-        return self.__repr__()
+    def forward(self, x: Tensor) -> Tensor:
+        if not self.training:
+            return x
+        xp = get_array_module()
+        mask = (xp.random.rand(*x.data.shape) > self.p).astype(xp.float32)
+        mask_tensor = Tensor(mask, requires_grad=False)
+        scale = 1.0 / (1.0 - self.p)
+        return (x * mask_tensor) * scale
+
 
 class Flatten(Module):
     """ 

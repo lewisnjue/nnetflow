@@ -20,8 +20,6 @@ except ImportError:
 import numpy as np
 import numpy.typing as npt
 
-
-# Global device state
 _current_device: Optional['Device'] = None
 
 
@@ -88,7 +86,6 @@ def get_device() -> Device:
     """
     global _current_device
     if _current_device is None:
-        # Default to CPU if no device is set
         _current_device = Device('cpu')
     return _current_device
 
