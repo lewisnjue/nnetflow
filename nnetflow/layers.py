@@ -1000,27 +1000,15 @@ class MultiHeadAttention(Module):
         self.dropout = dropout
         self.causal = causal
         self.max_seq_len = max_seq_len
-        
-        # Scale factor for attention scores (1/sqrt(head_dim))
         self.scale = 1.0 / (self.head_dim ** 0.5)
-        
-        # QKV projections - can be combined for efficiency, but separate is clearer
         self.W_query = Linear(d_in, d_out, bias=bias, dtype=dtype)
         self.W_key = Linear(d_in, d_out, bias=bias, dtype=dtype)
         self.W_value = Linear(d_in, d_out, bias=bias, dtype=dtype)
-        
-        # Output projection
         self.out_proj = Linear(d_out, d_out, bias=True, dtype=dtype)
-        
-        # Dropout layer
         self.dropout_layer = Dropout(dropout)
-        
-        # Causal mask (created lazily or pre-computed)
         self._causal_mask: Optional[Tensor] = None
         if causal and max_seq_len is not None:
-            # Pre-compute mask if max_seq_len is provided
             xp = get_array_module()
-            # Use float for mask, bool can cause issues with some operations
             mask = xp.triu(xp.ones((max_seq_len, max_seq_len), dtype=xp.float32), k=1)
             self._causal_mask = Tensor(mask, requires_grad=False)
     
@@ -1037,14 +1025,11 @@ class MultiHeadAttention(Module):
         if not self.causal:
             return None
         
-        # If mask was pre-computed and seq_len is within bounds, use it
         if self._causal_mask is not None and seq_len <= self._causal_mask.shape[0]:
             mask_slice = self._causal_mask[:seq_len, :seq_len]
             return mask_slice.bool()
         
-        # Otherwise, create mask dynamically
         xp = get_array_module()
-        # Create mask as float, then convert to bool when needed
         mask = xp.triu(xp.ones((seq_len, seq_len), dtype=xp.float32), k=1)
         mask_tensor = Tensor(mask, requires_grad=False)
         return mask_tensor.bool()
@@ -1060,50 +1045,30 @@ class MultiHeadAttention(Module):
             Output tensor of shape (batch_size, seq_len, d_out)
         """
         B, T, _ = x.shape
-        
-        # Project to Q, K, V: (B, T, d_out)
         Q = self.W_query(x)
         K = self.W_key(x)
         V = self.W_value(x)
         
-        # Reshape and transpose for multi-head attention
-        # (B, T, d_out) -> (B, T, num_heads, head_dim) -> (B, num_heads, T, head_dim)
         Q = Q.reshape(B, T, self.num_heads, self.head_dim).transpose((0, 2, 1, 3))
         K = K.reshape(B, T, self.num_heads, self.head_dim).transpose((0, 2, 1, 3))
         V = V.reshape(B, T, self.num_heads, self.head_dim).transpose((0, 2, 1, 3))
         
-        # Compute attention scores: (B, num_heads, T, T)
-        # Q @ K^T / sqrt(head_dim)
         attn_scores = (Q @ K.transpose((0, 1, 3, 2))) * self.scale
         
-        # Apply causal mask if enabled
         if self.causal:
             causal_mask = self._get_causal_mask(T)
             if causal_mask is not None:
-                # Expand mask to match attention scores shape: (1, 1, T, T)
-                # The mask is already bool, just need to broadcast it
                 mask_broadcast = causal_mask.data[None, None, :, :]
-                # Apply mask: set masked positions to -inf
                 attn_scores = attn_scores.masked_fill(
                     Tensor(mask_broadcast, requires_grad=False), 
                     float('-inf')
                 )
         
-        # Apply softmax to get attention weights
         attn_weights = attn_scores.softmax(axis=-1)
-        
-        # Apply dropout to attention weights
         attn_weights = self.dropout_layer(attn_weights)
-        
-        # Apply attention to values: (B, num_heads, T, head_dim)
         context = attn_weights @ V
-        
-        # Reshape back: (B, num_heads, T, head_dim) -> (B, T, num_heads, head_dim) -> (B, T, d_out)
         context = context.transpose((0, 2, 1, 3)).reshape(B, T, self.d_out)
-        
-        # Final output projection
         out = self.out_proj(context)
-        
         return out
     
     def __repr__(self) -> str:

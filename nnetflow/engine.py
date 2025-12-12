@@ -849,7 +849,7 @@ class Tensor:
             
         return out
     
-    def view(self, *new_shape):  # mybad :( i am inefficient but that okay 
+    def view(self, *new_shape):   
         """ 
         Reshape the tensor using a view-like API.
 
@@ -859,7 +859,6 @@ class Tensor:
             x.view(2, 3)
             x.view((2, 3))
         """ 
-        # Support either x.view(2, 3) or x.view((2, 3))
         if len(new_shape) == 1 and isinstance(new_shape[0], (tuple, list)):
             new_shape = tuple(new_shape[0])
         return self.reshape(*new_shape)
@@ -873,11 +872,9 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                # The inverse of a transpose is a transpose with the inverse permutation
                 if axes is None:
-                    inverse_axes = None # Standard matrix transpose
+                    inverse_axes = None 
                 else:
-                    # Use numpy for argsort (doesn't need device)
                     inverse_axes = tuple(np.argsort(axes))
                 self.grad += xp.transpose(out.grad, axes=inverse_axes)
         
