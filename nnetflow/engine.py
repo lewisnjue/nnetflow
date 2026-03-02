@@ -1,94 +1,102 @@
 import numpy as np
 import numpy.typing as npt
 import warnings
-from typing import Union, Tuple, Optional, Set
+from typing import Any, Union, Tuple, Optional, Set
 
 import scipy.special as sp
-from nnetflow.device import get_array_module, to_numpy 
-
-
+from nnetflow.device import get_array_module, to_numpy
 
 
 class Tensor:
-    """
-    A simple autograd Tensor class supporting dynamic computation graphs
+    """A simple autograd Tensor class supporting dynamic computation graphs
     and backpropagation.
+
+    This is the core data structure of nnetflow.  Every arithmetic operation
+    on tensors builds a directed acyclic graph (DAG) that records *how* the
+    output was produced.  Calling :meth:`backward` on a scalar output walks
+    this graph in reverse (topological) order and accumulates gradients via
+    the chain rule — this is reverse-mode automatic differentiation.
+
+    Key ideas for learners:
+        * ``data`` holds the actual numbers (a NumPy or CuPy array).
+        * ``grad`` holds the gradient (same shape as ``data``).
+        * ``_prev`` is the set of parent tensors that produced this one.
+        * ``_backward`` is a closure that computes the local gradient
+          contribution and adds it to each parent's ``grad``.
     """
-    def __init__(self, 
-                data: Union[np.ndarray, float, int, list, tuple],
-                _children: Tuple['Tensor', ...] = (), 
-                _op: str = '', 
-                requires_grad: Optional[bool] = None,
-                dtype: Optional[npt.DTypeLike] = None
-                 ) -> None:
-        """
+
+    def __init__(
+        self,
+        data: Union[np.ndarray, float, int, list, tuple],
+        _children: Tuple['Tensor', ...] = (),
+        _op: str = '',
+        requires_grad: Optional[bool] = None,
+        dtype: Optional[npt.DTypeLike] = None,
+    ) -> None:
+        """Create a new Tensor.
+
         Args:
-        data: the data for which to create tensor with 
-        dtype: the datatype of the Tensor (e.g. np.float32, np.int8). 
-            If None, defaults to float64. :😞, i will change later (that not good for deep learning)
-        _children: Tuple of the tensors that created this tensor 
-        _op: the operation that created this tensor 
-        requires_grad: bool of if the Tensor requires gradient tracking 
+            data: Raw data — a NumPy/CuPy array, Python scalar, list, or tuple.
+            _children: Tensors that were used to produce this tensor (used
+                internally by operations to build the computation graph).
+            _op: A short label for the operation that created this tensor
+                (e.g. ``'+'``, ``'@'``).  Used only for debugging/display.
+            requires_grad: Whether to track gradients for this tensor.  If
+                ``None``, gradient tracking is enabled automatically when
+                any parent tensor requires gradients.
+            dtype: Data type of the tensor (e.g. ``np.float32``).  If
+                ``None``, the dtype is inferred from *data* (or defaults
+                to ``np.float64`` for plain Python scalars/lists).
         """
         xp = get_array_module()
-        
+
         # Priority: explicit `dtype` argument > ndarray's dtype > default float64
         if dtype is not None:
             target_dtype = np.dtype(dtype)
         elif hasattr(data, 'dtype'):  # Works for both numpy and cupy arrays
             target_dtype = data.dtype
         else:
-            target_dtype = np.float64 # 😞 this is poor i will change later 
+            target_dtype = np.float64
 
         # Handle both numpy and cupy arrays, or convert from Python types
         if hasattr(data, 'dtype'):  # numpy or cupy array
             try:
-                # If data is already on the correct device, use it directly
-                # Otherwise, convert to the current device's array module
-                if hasattr(data, 'device'):  # cupy array
-                    self.data = xp.asarray(data, dtype=target_dtype)
-                else:  # numpy array
-                    self.data = xp.asarray(data, dtype=target_dtype)
+                self.data = xp.asarray(data, dtype=target_dtype)
             except Exception:
-                # Fallback: attempt a simple copy and cast
                 self.data = xp.array(data, dtype=target_dtype)
         else:
             try:
                 self.data = xp.array(data, dtype=target_dtype)
             except Exception as e:
                 raise TypeError(f"Could not convert data to Tensor. Error: {e}")
+
         self._op = _op
-        self._prev: Set['Tensor'] = set(c for c in _children if isinstance(c, Tensor)) # this is one of the limitation 😞 
+        # Only Tensor children participate in the computation graph.
+        self._prev: Set['Tensor'] = set(c for c in _children if isinstance(c, Tensor))
+
         if requires_grad is None:
             self.requires_grad = any(c.requires_grad for c in self._prev)
         else:
             self.requires_grad = bool(requires_grad)
+
         if self.requires_grad:
             xp = get_array_module()
             grad_dtype = np.float64 if self.data.dtype not in [np.float64, np.float32] else self.data.dtype
             self.grad: Optional[Any] = xp.zeros(self.data.shape, dtype=grad_dtype)
         else:
             self.grad = None
+
         self._backward = lambda: None
 
     def __getstate__(self):
-        """
-        Called when pickling. We remove components that cannot (or should not) be saved.
-        """
+        """Called when pickling — removes the backward closure which cannot be serialized."""
         state = self.__dict__.copy()
         if '_backward' in state:
             del state['_backward']
-        # Optional: Remove graph history to save space. 
-        # When saving a model, we usually treat weights as fresh leaf nodes.
-        # if '_prev' in state:
-        #     state['_prev'] = set()
-        
         return state
 
     def __setstate__(self, state):
-        """
-        Called when unpickling. We restore the state and re-initialize the missing lambda.
-        """
+        """Called when unpickling — restores a no-op backward closure."""
         self.__dict__.update(state)
         self._backward = lambda: None
 
@@ -98,33 +106,23 @@ class Tensor:
         return self.data.dtype 
 
     def to(self, dtype: npt.DTypeLike) -> 'Tensor':
-        """
+        """Cast the tensor to a new dtype, returning a **detached** copy.
 
-        Casts the tensor to a specified dtype. Note that the returned `Tensor` is detached to from teh original one and theirfore 
-        they are not the same thing , this is done intentinaly to prevent breaking the backward chain for example if you performed 
-        z = x + y and then you try to change the dtype of x 
-        
+        The returned tensor is independent of the original — it does not
+        share the computation graph.  This is intentional: casting in the
+        middle of a forward pass would break the backward chain.
+
         Args:
-            dtype: Target data type (e.g., np.float32, np.float16, np.int32)
-            
+            dtype: Target data type (e.g. ``np.float32``, ``np.int32``).
+
         Returns:
-            A new Tensor with the specified dtype
+            A new ``Tensor`` with the specified dtype.
         """
-        new_data = self.data.astype(dtype) # this is a copy not the original one that cool 😎
-        new_tensor = Tensor(new_data, requires_grad=self.requires_grad)
-        return new_tensor
-    
+        new_data = self.data.astype(dtype)  # creates a copy
+        return Tensor(new_data, requires_grad=self.requires_grad)
+
     def astype(self, dtype: npt.DTypeLike) -> 'Tensor':
-        """
-        Alias for .to() method. Casts the tensor to a specified dtype.
-        Rember that it return a new Tensor not modify the original one. This is not efficient but ok for now  😞
-        
-        Args:
-            dtype: Target data type (e.g., np.float32, np.float16, np.int32)
-            
-        Returns:
-            A new Tensor with the specified dtype
-        """
+        """Alias for :meth:`to`.  Returns a new tensor with the given dtype."""
         return self.to(dtype)
 
     @classmethod  
@@ -148,9 +146,7 @@ class Tensor:
         return grad
 
     def __repr__(self) -> str:
-        """
-          Print a Sting representation of a Tensor 
-        """ 
+        """Return a human-readable string representation of the Tensor."""
         # Convert to numpy for display purposes
         data_np = to_numpy(self.data)
         data_str = np.array2string(data_np, max_line_width=70, precision=4, suppress_small=True)
@@ -167,82 +163,46 @@ class Tensor:
             self.grad = xp.zeros_like(self.data,dtype=grad_dtype)
 
     
-    @classmethod  
-    def zeros(cls, *shape: int, requires_grad: bool = False,dtype:Optional[npt.DTypeLike] = None) -> 'Tensor':
-        """ 
-        Args: 
-            shape: the shape of your tensor, 
-            requires_grad: if the tensor requires gradient tracking 
-            dtype : the data type of the Tensor filled with zeros 
-        Returns: 
-            Tensor filled with zero 
-        """ 
+    @classmethod
+    def zeros(cls, *shape: int, requires_grad: bool = False, dtype: Optional[npt.DTypeLike] = None) -> 'Tensor':
+        """Create a tensor filled with zeros."""
         xp = get_array_module()
-        return cls(xp.zeros(shape), requires_grad=requires_grad,dtype = dtype)
+        return cls(xp.zeros(shape), requires_grad=requires_grad, dtype=dtype)
 
     @classmethod
-    def ones(cls, *shape: int, requires_grad: bool = False,dtype: Optional[npt.DTypeLike] = None) -> 'Tensor':
-        """ 
-        Args: 
-            shape: the shape of the Tensor 
-            requires_grad: if the Tensor require gradient tracking 
-            dtype: The data type of the Tensor 
-        Returns: 
-            Tensor filled with ones 
-        """ 
+    def ones(cls, *shape: int, requires_grad: bool = False, dtype: Optional[npt.DTypeLike] = None) -> 'Tensor':
+        """Create a tensor filled with ones."""
         xp = get_array_module()
-        return cls(xp.ones(shape), requires_grad=requires_grad,dtype=dtype)
+        return cls(xp.ones(shape), requires_grad=requires_grad, dtype=dtype)
 
     @classmethod
-    def randn(cls, *shape: int, requires_grad: bool = False,dtype:Optional[npt.DTypeLike] = None) -> 'Tensor':
-        """ 
-        creates a tensor filled with random numbers 
-        Args: 
-            shape: the shape of the Tensor 
-            requires_grad: if the Tensor require gradient tracking 
-            dtype: The data type of the Tensor 
-        Returns: 
-            Tensor 
-        """ 
+    def randn(cls, *shape: int, requires_grad: bool = False, dtype: Optional[npt.DTypeLike] = None) -> 'Tensor':
+        """Create a tensor filled with random numbers from a standard normal distribution."""
         xp = get_array_module()
-        data = xp.random.randn(*shape).astype(dtype=dtype if dtype else np.float32) 
-        return cls(data, requires_grad=requires_grad,dtype=dtype)
+        data = xp.random.randn(*shape).astype(dtype=dtype if dtype else np.float32)
+        return cls(data, requires_grad=requires_grad, dtype=dtype)
 
-    @classmethod  
-    def zeros_like(cls, tensor: 'Tensor', requires_grad: Optional[bool] = None,dtype:Optional[npt.DTypeLike] =None) -> 'Tensor':
-        """ 
-        creates a Tensor filled with zeros of the shape of a given Tensor 
-        Args: 
-            tensor: tensor of the shape you want to create a new Tensor based on its shape 
-            requires_grad: if the new created Tensor requires gradient tracking 
-            dtype: The data type of the Tensor 
-        Returns: 
-            Tensor 
-        """ 
+    @classmethod
+    def zeros_like(cls, tensor: 'Tensor', requires_grad: Optional[bool] = None, dtype: Optional[npt.DTypeLike] = None) -> 'Tensor':
+        """Create a tensor of zeros with the same shape as *tensor*."""
         if requires_grad is None:
             requires_grad = tensor.requires_grad
         xp = get_array_module()
-        return cls(xp.zeros_like(tensor.data), requires_grad=requires_grad,dtype=dtype)
+        return cls(xp.zeros_like(tensor.data), requires_grad=requires_grad, dtype=dtype)
 
     @classmethod
-    def ones_like(cls, tensor: 'Tensor', requires_grad: Optional[bool] = None,dtype:Optional[npt.DTypeLike]= None) -> 'Tensor':
-        """ 
-        create a tensor filled with ones of the shape of the passed tensor 
-        Args: 
-            tensor: Tensor of the shape you want to create 
-            requires_grad: if the new tensor created will require gradient tracking 
-            dtype: The datatype of the tensor 
-        Returns: 
-            Tensor 
-        """ 
+    def ones_like(cls, tensor: 'Tensor', requires_grad: Optional[bool] = None, dtype: Optional[npt.DTypeLike] = None) -> 'Tensor':
+        """Create a tensor of ones with the same shape as *tensor*."""
         if requires_grad is None:
             requires_grad = tensor.requires_grad
         xp = get_array_module()
-        return cls(xp.ones_like(tensor.data), requires_grad=requires_grad,dtype=dtype)
+        return cls(xp.ones_like(tensor.data), requires_grad=requires_grad, dtype=dtype)
 
-    def __add__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':  
-        """ 
-        called when you try to add a Tensor to another Tensor  a float , int or numpy array 
+    def __add__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':
+        """Element-wise addition (``self + other``).
+
+        Supports adding a Tensor to another Tensor, a scalar, or a NumPy array.
+        Broadcasting is handled automatically during the backward pass.
         """
         other_val = other.data if isinstance(other, Tensor) else other
         children = (self, other) if isinstance(other, Tensor) else (self,)
@@ -260,20 +220,18 @@ class Tensor:
             out._backward = _backward
         return out
     
-    def add(self,x:'Tensor'): 
-        """ 
-        add two tensors to create a new tensor 
-        Args: 
-            x: Tensor to which to add to self tensor 
-        """
-        return self.__add__(x) 
+    def add(self, x: 'Tensor') -> 'Tensor':
+        """Functional form of addition.  Equivalent to ``self + x``."""
+        return self.__add__(x)
 
 
     def __mul__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':
-        """" 
-        called when you try to multiply a Tensor with another Tensor or float, int or a numpy arry, 
-        rember that the gradient of the childrent after this operation is the product of the gradient that comes out and the 
-        other data 
+        """Element-wise multiplication (``self * other``).
+
+        The local gradient rule is:
+            d(a * b)/da = b  and  d(a * b)/db = a
+        so in the backward pass the incoming gradient is scaled by the *other*
+        operand's data.
         """
         other_val = other.data if isinstance(other, Tensor) else other
         children = (self, other) if isinstance(other, Tensor) else (self,)
@@ -290,18 +248,12 @@ class Tensor:
             out._backward = _backward
         return out
     
-    def matmul(self,x:'Tensor'): 
-        """ 
-        perform matrix multiplication of two tensors 
-        Args: 
-            x: the tensor on which self will perform matrix multiplication 
-        """ 
-        return self.__matmul__(x) 
+    def matmul(self, x: 'Tensor') -> 'Tensor':
+        """Functional form of matrix multiplication.  Equivalent to ``self @ x``."""
+        return self.__matmul__(x)
 
     def __pow__(self, other: Union[float, int]) -> 'Tensor':
-        """ 
-        called when you try to raise a Tensor with a float or a int , we only support those two :(
-        """
+        """Element-wise power (``self ** other``).  Only scalar exponents are supported."""
         assert isinstance(other, (float, int)), "Only support float and int power for Tensor"
         out = Tensor(self.data ** other, (self,), f'**{other}') 
         
@@ -313,10 +265,12 @@ class Tensor:
             out._backward = _backward
         return out
 
-    def __truediv__(self, other: Union['Tensor', float, int, np.ndarray],eps:float = 1e-8,use_tor:bool  = False) -> 'Tensor':
-        """ 
-        This is called when you try to divide a Tensor with another Tenosr or float, int or numpy array 
-        if require grad, when calculating the gradient using back propagation a small epison is added to avoid division by zero :) 
+    def __truediv__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':
+        """Element-wise division (``self / other``).
+
+        Local gradient rules:
+            d(a/b)/da =  1 / b
+            d(a/b)/db = -a / b**2
         """
         other_val = other.data if isinstance(other, Tensor) else other
         children = (self, other) if isinstance(other, Tensor) else (self,)
@@ -324,15 +278,10 @@ class Tensor:
         out = Tensor(self.data / other_val, children, '/')
         
         def _backward():
-            if use_tor: 
-                other_val_safe = other_val + eps 
-            else:
-                other_val_safe = other_val 
-
             if self.requires_grad:
-                self.grad += Tensor.unbroadcast((1 / other_val_safe) * out.grad, self.data.shape)
+                self.grad += Tensor.unbroadcast((1 / other_val) * out.grad, self.data.shape)
             if isinstance(other, Tensor) and other.requires_grad:
-                other.grad += Tensor.unbroadcast((-self.data / (other_val_safe ** 2)) * out.grad, other.data.shape)
+                other.grad += Tensor.unbroadcast((-self.data / (other_val ** 2)) * out.grad, other.data.shape)
                 
         if out.requires_grad:
             out._backward = _backward
@@ -478,9 +427,8 @@ class Tensor:
         if out.requires_grad:
             out._backward = _backward
         return out
-# -- start from here 
     def log(self) -> 'Tensor':
-        """Natural logarithm (ln)"""
+        """Natural logarithm (ln)."""
         xp = get_array_module()
         # Convert to numpy for checking (scalar check)
         if not np.all(to_numpy(self.data) > 0):
@@ -529,12 +477,10 @@ class Tensor:
         return out
 
     def log10(self) -> 'Tensor':
-        """Base-10 logarithm"""
+        """Base-10 logarithm."""
         xp = get_array_module()
-        # Convert to numpy for checking (scalar check)
         if not np.all(to_numpy(self.data) > 0):
-            print("Warning: log10 applied to non-positive elements.")
-            warnings.warn("Log10 applied to non-positive elements",RuntimeWarning,stacklevel=2)
+            warnings.warn("Log10 applied to non-positive elements", RuntimeWarning, stacklevel=2)
         
         out = Tensor(xp.log10(self.data), (self,), 'log10') 
         
@@ -550,9 +496,10 @@ class Tensor:
 
 
     def relu(self) -> 'Tensor':
-        """ 
-        Perform relu activation pased on this paper : https://arxiv.org/abs/1803.08375
-        """ 
+        """Rectified Linear Unit: ``max(0, x)``.
+
+        Reference: https://arxiv.org/abs/1803.08375
+        """
         xp = get_array_module()
         out = Tensor(xp.maximum(self.data, 0), (self,), 'relu')
         
@@ -564,10 +511,11 @@ class Tensor:
             out._backward = _backward
         return out
 
-    def leaky_relu(self, alpha: float = 0.01) -> 'Tensor': 
-        """ 
-        perform activation pased on this paper : https://arxiv.org/abs/1505.00853 
-        """ 
+    def leaky_relu(self, alpha: float = 0.01) -> 'Tensor':
+        """Leaky ReLU: ``x`` if ``x > 0``, else ``alpha * x``.
+
+        Reference: https://arxiv.org/abs/1505.00853
+        """
         xp = get_array_module()
         out = Tensor(xp.where(self.data > 0, self.data, alpha * self.data), (self,), 'leaky_relu')
         
@@ -580,9 +528,10 @@ class Tensor:
         return out
 
     def elu(self, alpha: float = 1.0) -> 'Tensor':
-        """ 
-        perform activation based on this paper : https://arxiv.org/abs/1511.07289 
-        """ 
+        """Exponential Linear Unit: ``x`` if ``x > 0``, else ``alpha * (exp(x) - 1)``.
+
+        Reference: https://arxiv.org/abs/1511.07289
+        """
         xp = get_array_module()
         out = Tensor(xp.where(self.data > 0, self.data, alpha * (xp.exp(self.data) - 1)), (self,), 'elu')
         
@@ -595,10 +544,11 @@ class Tensor:
             out._backward = _backward
         return out
 
-    def selu(self, alpha: float = 1.67326, scale: float = 1.0507) -> 'Tensor': # Renamed beta to scale
-        """ 
-        perform activation based on this paper : https://arxiv.org/abs/1706.02515 
-        """ 
+    def selu(self, alpha: float = 1.67326, scale: float = 1.0507) -> 'Tensor':
+        """Scaled Exponential Linear Unit.
+
+        Reference: https://arxiv.org/abs/1706.02515
+        """
         xp = get_array_module()
         out = Tensor(scale * xp.where(self.data > 0, self.data, alpha * (xp.exp(self.data) - 1)), (self,), 'selu')
         
@@ -611,9 +561,10 @@ class Tensor:
         return out
 
     def gelu(self) -> 'Tensor':
-        """ 
-        perform gelu activation based on this paper : https://arxiv.org/abs/1606.08415 
-        """ 
+        """Gaussian Error Linear Unit.
+
+        Reference: https://arxiv.org/abs/1606.08415
+        """
         xp = get_array_module()
         # scipy.special.erf works with numpy arrays, so convert if needed
         data_np = to_numpy(self.data)
@@ -645,9 +596,11 @@ class Tensor:
         return out
 
     def sigmoid(self) -> 'Tensor':
-        """ 
-        perform sigmoid activation  
-        """ 
+        """Sigmoid activation: ``1 / (1 + exp(-x))``.
+
+        Uses a numerically stable formulation that avoids overflow for
+        large negative values.
+        """
         xp = get_array_module()
         # Numerically stable sigmoid
         sig = xp.where(self.data >= 0, 
@@ -664,9 +617,10 @@ class Tensor:
         return out
 
     def swish(self) -> 'Tensor':
-        """ 
-        perform swish activation pased on this paper : https://arxiv.org/pdf/1710.05941v1 
-        """ 
+        """Swish activation: ``x * sigmoid(x)``.
+
+        Reference: https://arxiv.org/abs/1710.05941
+        """
         # swish(x) = x * sigmoid(x)
         # We can re-use our stable sigmoid
         sig = self.sigmoid() 
@@ -675,9 +629,7 @@ class Tensor:
         return out
 
     def tanh(self) -> 'Tensor':
-        """
-        perform tanh to the Tensor 
-        """ 
+        """Hyperbolic tangent activation."""
         xp = get_array_module()
         t = xp.tanh(self.data)
         out = Tensor(t, (self,), 'tanh')
@@ -691,9 +643,10 @@ class Tensor:
         return out
 
     def softmax(self, axis: int = -1) -> 'Tensor':
-        """ 
-        perform softmax operation  to the Tensor 
-        """ 
+        """Softmax: ``exp(x_i) / sum(exp(x_j))`` along *axis*.
+
+        Uses the log-sum-exp trick for numerical stability.
+        """
         xp = get_array_module()
         # Log-sum-exp trick for numerical stability
         max_val = self.data.max(axis=axis, keepdims=True)
@@ -721,9 +674,7 @@ class Tensor:
         return out
 
     def log_softmax(self, axis: int = -1) -> 'Tensor':
-        """ 
-        perform log_sotmax 
-        """ 
+        """Log-softmax: numerically stable ``log(softmax(x))`` along *axis*."""
         xp = get_array_module()
         # Stable LogSoftmax
         max_val = self.data.max(axis=axis, keepdims=True)
@@ -748,9 +699,10 @@ class Tensor:
 
 
     def reshape(self, *new_shape: int) -> 'Tensor':
-        """ 
-        reshape the tensor to a new shape , rember that this creates a new tensor not efficient :( 
-        """ 
+        """Return a tensor with the same data but a different shape.
+
+        Note: this creates a new node in the computation graph.
+        """
         if -1 in new_shape:
             # Calculate the -1 dimension
             new_shape = list(new_shape)
@@ -864,9 +816,12 @@ class Tensor:
         return self.reshape(*new_shape)
 
     def transpose(self, axes: Optional[Tuple[int, ...]] = None) -> 'Tensor':
-        """ 
-        transpose a tensor on the given axes but create a new tensor , not efficient 
-        """ 
+        """Permute the dimensions of the tensor.
+
+        Args:
+            axes: Order of axes for the transposition.  If ``None``,
+                reverses the order of all dimensions.
+        """
         xp = get_array_module()
         out = Tensor(xp.transpose(self.data, axes=axes), (self,), 'transpose')
         

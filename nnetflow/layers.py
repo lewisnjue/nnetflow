@@ -7,21 +7,19 @@ from nnetflow.device import get_array_module
 import numpy.typing as npt
 
 class Linear(Module):
+    """Fully-connected (dense) layer: ``output = input @ weight + bias``.
+
+    Weights are initialized with He uniform initialization by default.
     """
-    This class creates a Linear Layer. This is a dense layer 
-    it perform the following mathematical calculation: 
-    out_put = input @ weight + bias 
-    by default weights will be initalized using He uniform initialization 
-    """
-    def __init__(self,in_features:int, out_features:int,bias = True,dtype:Optional[npt.DTypeLike] = None) -> None: 
-        """ 
-        Args: 
-            in_features: this is the number of features in your input tensor 
-            out_features: this is the number of neuron to create  which are all fully connected to the in_features 
-            bias: if true , bias is added if not it is not 
-            dtype: the data type of the weights and bias tensors 
-        Returns: 
-            None 
+
+    def __init__(self, in_features: int, out_features: int, bias: bool = True, dtype: Optional[npt.DTypeLike] = None) -> None:
+        """Create a Linear layer.
+
+        Args:
+            in_features: Number of input features (last dimension of input).
+            out_features: Number of output features (neurons).
+            bias: If ``True``, a learnable bias vector is added.
+            dtype: Data type for parameters (e.g. ``np.float32``).
         """
         self.in_features = in_features 
         self.out_features = out_features 
@@ -34,14 +32,14 @@ class Linear(Module):
         if bias:
             self.bias = Tensor(_bias, requires_grad=True,dtype=dtype)
     
-    def forward(self,x:Tensor) -> Tensor:
-        """ 
-        This is the forward pass of the layer 
-        Args: 
-            x: the input tensor of shape (batchsize,in_features)
-        Returns: 
-            Tensor 
-        
+    def forward(self, x: Tensor) -> Tensor:
+        """Compute ``x @ weight + bias``.
+
+        Args:
+            x: Input tensor of shape ``(batch_size, in_features)``.
+
+        Returns:
+            Output tensor of shape ``(batch_size, out_features)``.
         """
         assert x.shape[-1] == self.in_features, f"Input feature size mismatch, expected {self.in_features}, got {x.shape[-1]}"
         if self.has_bias:
@@ -50,36 +48,31 @@ class Linear(Module):
             return x @ self.weight 
 
     def __repr__(self) -> str:
-        """ 
-        prints a string description of the layer when you try to print the layer 
-        """ 
-        return f"Linear(in_features={self.in_features}, out_features={self.out_features})" 
-    
-    def __str__(self):
-        """ 
-        just call the __repr__ 
-        """
+        return f"Linear(in_features={self.in_features}, out_features={self.out_features})"
+
+    def __str__(self) -> str:
         return self.__repr__()
 
 class Conv2d(Module):
-    """
-    Implements a 2D convolution layer for your autograd Tensor class.
-    Input format: (batch_size, in_channels, height, width)
-    Link to the paper : https://arxiv.org/abs/1511.08458
-    by default weights will be initialized using He normal initialization 
+    """2D convolution layer.
+
+    Input format: ``(batch_size, in_channels, height, width)``.
+    Weights are initialized with He normal initialization by default.
+
+    Reference: https://arxiv.org/abs/1511.08458
     """
 
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0, bias: bool = True,dtype:Optional[npt.DTypeLike] = None) -> None:
-        """
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0, bias: bool = True, dtype: Optional[npt.DTypeLike] = None) -> None:
+        """Create a Conv2d layer.
+
         Args:
             in_channels: Number of input channels.
             out_channels: Number of output channels (filters).
-            kernel_size: Size of the kernel (assumed square).
-            stride: Stride for the convolution.
-            padding: Padding for the convolution.
-            bias: If True, adds a bias term.
-        Returns: 
-            None
+            kernel_size: Size of the square kernel.
+            stride: Stride of the convolution.
+            padding: Zero-padding added to both sides.
+            bias: If ``True``, adds a learnable bias term.
+            dtype: Data type for parameters.
         """
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -89,7 +82,6 @@ class Conv2d(Module):
         self.has_bias = bias
         self.dtype = dtype
 
-        fan_in = in_channels * kernel_size * kernel_size
         xp = get_array_module()
         _weight = xp.random.randn(
             out_channels, in_channels, kernel_size, kernel_size) 
@@ -225,21 +217,25 @@ class Conv2d(Module):
 
 
 class Conv1d(Module):
+    """1D convolution layer.
+
+    Input format: ``(batch_size, in_channels, length)``.
+    Weights are initialized with He normal initialization by default.
+
+    Reference: https://arxiv.org/abs/1511.08458
     """
-    Implements a 1D convolution layer for your autograd Tensor class.
-    Input format: (batch_size, in_channels, length)
-    Link to the paper : https://arxiv.org/abs/1511.08458
-    by default weights will be initialized using He normal initialization
-    """
+
     def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0, bias: bool = True, dtype: Optional[npt.DTypeLike] = None) -> None:
-        """
+        """Create a Conv1d layer.
+
         Args:
             in_channels: Number of input channels.
             out_channels: Number of output channels (filters).
             kernel_size: Size of the kernel.
-            stride: Stride for the convolution.
-            padding: Padding for the convolution.
-            bias: If True, adds a bias term.
+            stride: Stride of the convolution.
+            padding: Zero-padding added to both sides.
+            bias: If ``True``, adds a learnable bias term.
+            dtype: Data type for parameters.
         """
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -248,7 +244,6 @@ class Conv1d(Module):
         self.padding = padding
         self.has_bias = bias
 
-        fan_in = in_channels * kernel_size
         xp = get_array_module()
         _weight = xp.random.randn(
             out_channels, in_channels, kernel_size) 
@@ -382,22 +377,24 @@ class Conv1d(Module):
 
 
 class BatchNorm1d(Module):
+    """Batch Normalization over a batch of 2-D or 3-D inputs.
+
+    During training, normalizes each feature across the batch and maintains
+    running statistics for use at evaluation time.
+
+    Reference: https://arxiv.org/abs/1502.03167
     """
-    Batch Normalization layer that normalizes inputs across the batch dimension.
-    Supports both training and evaluation modes.
-    Link to the paper : https://arxiv.org/abs/1502.03167 
-    """ 
-    
- 
+
     def __init__(self, num_features: int, eps: float = 1e-5, momentum: float = 0.1, affine: bool = True) -> None:
-        """ 
+        """Create a BatchNorm1d layer.
+
         Args:
-            num_features: Number of features/channels to normalize
-            eps: Small constant for numerical stability (default: 1e-5)
-            momentum: Momentum factor for running stats (default: 0.1)
-            affine: If True, has learnable affine parameters (default: True)
-        Returns: 
-            None 
+            num_features: Number of features/channels to normalize.
+            eps: Small constant added to the denominator for numerical stability.
+            momentum: Momentum factor for exponential moving average of
+                running mean and variance.
+            affine: If ``True``, learnable scale (gamma) and shift (beta)
+                parameters are added.
         """
         self.num_features = num_features
         self.eps = eps
@@ -417,11 +414,14 @@ class BatchNorm1d(Module):
         self.running_var = Tensor(xp.ones((1, num_features)), requires_grad=False)
 
     def forward(self, x: Tensor) -> Tensor:
-        """ 
-        Args: 
-            x: the input to be normalized 
-        Returns: 
-         x normalized
+        """Normalize the input tensor.
+
+        Args:
+            x: Input tensor of shape ``(batch_size, num_features)`` or
+                ``(batch_size, seq_len, num_features)``.
+
+        Returns:
+            Normalized tensor of the same shape.
         """
         orig_shape = x.shape
         # Ensure parameters run in the same dtype as the input to avoid
@@ -469,23 +469,35 @@ class BatchNorm1d(Module):
 
 
 class LayerNorm(Module):
-    """ 
-    This layer perform Layer normalization based on this paper  : https://arxiv.org/abs/1607.06450
-    """ 
-    def __init__(self, dim: int, eps: float = 1e-5) -> None: 
-        """Initialize LayerNorm.
+    """Layer Normalization over the last dimension.
+
+    Unlike BatchNorm, this normalizes each sample independently, making
+    it suitable for variable-length sequences (e.g. in Transformers).
+
+    Reference: https://arxiv.org/abs/1607.06450
+    """
+
+    def __init__(self, dim: int, eps: float = 1e-5) -> None:
+        """Create a LayerNorm layer.
+
         Args:
-            dim: The size of the last dimension of input tensors
-            eps: Small constant for numerical stability
-        Returns: 
-            None 
+            dim: Size of the last dimension of input tensors.
+            eps: Small constant for numerical stability.
         """
         self.eps = eps
         xp = get_array_module()
         self.gamma = Tensor(xp.ones((1, dim)), requires_grad=True)
         self.beta = Tensor(xp.zeros((1, dim)), requires_grad=True)
 
-    def forward(self, x: Tensor) -> Tensor: 
+    def forward(self, x: Tensor) -> Tensor:
+        """Apply layer normalization over the last dimension.
+
+        Args:
+            x: Input tensor of shape ``(..., dim)``.
+
+        Returns:
+            Normalized tensor of the same shape.
+        """
         # Match parameter dtype to input dtype to avoid upcasting
         target_dtype = x.data.dtype
         if self.gamma.data.dtype != target_dtype:
@@ -500,20 +512,20 @@ class LayerNorm(Module):
         out = self.gamma * x_normalized + self.beta
         return out 
     
-class Embedding(Module): 
-    """ 
-    Creates an embedding layer 
-    by default weights are initialized using He  normal 
-    """ 
+class Embedding(Module):
+    """A lookup table that maps integer indices to dense vectors.
+
+    Weights are initialized with He normal initialization.
+    """
 
     def __init__(self, num_embeddings: int, embedding_dim: int, dtype: Optional[npt.DTypeLike] = None) -> None:
-        """ 
-        Args: 
-            num_embeddings: number of embeddings you want to create 
-            embedding_dim: the embedding dimention 
-        Returns: 
-            None 
-        """ 
+        """Create an Embedding layer.
+
+        Args:
+            num_embeddings: Size of the vocabulary (number of rows).
+            embedding_dim: Dimension of each embedding vector.
+            dtype: Data type for the embedding weight matrix.
+        """
         self.num_embeddings = num_embeddings 
         self.embedding_dim = embedding_dim  
         xp = get_array_module()
@@ -521,17 +533,26 @@ class Embedding(Module):
         self.weight = Tensor(weight, requires_grad=True,dtype=dtype) 
         initializers.He_normal(self.weight, nonlinearity='relu')
 
-    
+
     def forward(self, indices: Union[int, slice, tuple]) -> Tensor:
-        embedded = self.weight[indices]
-        return embedded
+        """Look up embeddings for the given indices.
+
+        Args:
+            indices: Integer indices, slices, or a tuple of indices into
+                the embedding table.
+
+        Returns:
+            Tensor containing the selected embedding vectors.
+        """
+        return self.weight[indices]
 
 
 class Dropout(Module):
-    """
-    Applies Inverted Dropout.
-    During training, randomly zeroes some of the elements of the input tensor 
-    with probability p using samples from a Bernoulli distribution.
+    """Inverted Dropout layer.
+
+    During training, randomly zeroes elements of the input with probability
+    ``p`` and scales the remaining values by ``1 / (1 - p)`` so that the
+    expected sum is unchanged.  During evaluation, this layer is a no-op.
     """
     def __init__(self, p: float = 0.5) -> None:
         """
@@ -553,14 +574,13 @@ class Dropout(Module):
 
 
 class Flatten(Module):
-    """ 
-    reshapes the tensor to shape of (batch_size,-1) 
-    """  
+    """Flatten all dimensions except the batch dimension.
+
+    Reshapes input from ``(batch_size, ...)`` to ``(batch_size, -1)``.
+    """
+
     def __init__(self) -> None:
-        """ 
-        init is empty 
-        """ 
-        pass 
+        pass
     
     def forward(self,x:Tensor) -> Tensor:
         batch_size = x.shape[0]
@@ -845,24 +865,28 @@ class MaxPool1d(Module):
 
 
 class RNN(Module):
-    """ 
-    A simple RNN layer capable of handling sequential data.
+    """Vanilla (Elman) RNN layer with tanh non-linearity.
+
+    At each time step *t* the hidden state is updated as::
+
+        h_t = tanh(x_t @ W_xh + h_{t-1} @ W_hh + b_h)
 
     Notes:
         * Expects input of shape ``(batch_size, time_steps, n_features)``.
-        * Uses a vanilla tanh RNN cell.
-        * This is a simplified implementation and currently assumes a fixed
-          input feature size inferred on the first forward pass.
+        * Parameters are lazily initialized on the first forward pass
+          once the input feature dimension is known.
     """
 
     def __init__(self, n_neurons: int = 1, return_sequence: bool = False, dtype: Optional[npt.DTypeLike] = None) -> None:
-        """ 
+        """Create an RNN layer.
+
         Args:
-            n_neurons: Number of hidden units in this RNN layer.
-            return_sequence: If True, returns the hidden state at every
-                time step with shape ``(batch_size, time_steps, n_neurons)``.
-                If False, returns only the final hidden state with shape
+            n_neurons: Number of hidden units.
+            return_sequence: If ``True``, returns the hidden state at every
+                time step ``(batch_size, time_steps, n_neurons)``.
+                If ``False``, returns only the final hidden state
                 ``(batch_size, n_neurons)``.
+            dtype: Data type for parameters.
         """
         self.n_neurons = n_neurons
         self.return_sequence = return_sequence
@@ -949,16 +973,18 @@ class RNN(Module):
 
 
 class MultiHeadAttention(Module):
-    """
-    Multi-Head Attention mechanism as described in "Attention Is All You Need" (Vaswani et al., 2017).
-    
-    This implementation supports:
-    - Causal masking for autoregressive models
-    - Dropout for regularization
-    - Optional QKV bias
-    - Optimized for both CPU and GPU
-    
-    Link to paper: https://arxiv.org/abs/1706.03762
+    """Multi-Head Attention (Vaswani et al., 2017).
+
+    Splits queries, keys and values into ``num_heads`` parallel attention
+    heads, computes scaled dot-product attention independently for each
+    head, and concatenates the results.
+
+    Features:
+        * Causal masking for autoregressive models.
+        * Dropout regularization on attention weights.
+        * Optional QKV bias.
+
+    Reference: https://arxiv.org/abs/1706.03762
     """
     
     def __init__(
