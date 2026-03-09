@@ -4,7 +4,6 @@ import warnings
 from typing import Any, Union, Tuple, Optional, Set
 
 import scipy.special as sp
-from nnetflow.device import get_array_module, to_numpy
 
 
 class Tensor:
@@ -16,13 +15,6 @@ class Tensor:
     output was produced.  Calling :meth:`backward` on a scalar output walks
     this graph in reverse (topological) order and accumulates gradients via
     the chain rule — this is reverse-mode automatic differentiation.
-
-    Key ideas for learners:
-        * ``data`` holds the actual numbers (a NumPy or CuPy array).
-        * ``grad`` holds the gradient (same shape as ``data``).
-        * ``_prev`` is the set of parent tensors that produced this one.
-        * ``_backward`` is a closure that computes the local gradient
-          contribution and adds it to each parent's ``grad``.
     """
 
     def __init__(
@@ -36,7 +28,7 @@ class Tensor:
         """Create a new Tensor.
 
         Args:
-            data: Raw data — a NumPy/CuPy array, Python scalar, list, or tuple.
+            data: Raw data — a NumPy array, Python scalar, list, or tuple.
             _children: Tensors that were used to produce this tensor (used
                 internally by operations to build the computation graph).
             _op: A short label for the operation that created this tensor
@@ -48,30 +40,23 @@ class Tensor:
                 ``None``, the dtype is inferred from *data* (or defaults
                 to ``np.float64`` for plain Python scalars/lists).
         """
-        xp = get_array_module()
-
-        # Priority: explicit `dtype` argument > ndarray's dtype > default float64
         if dtype is not None:
             target_dtype = np.dtype(dtype)
-        elif hasattr(data, 'dtype'):  # Works for both numpy and cupy arrays
+        elif hasattr(data, 'dtype'):  
             target_dtype = data.dtype
         else:
             target_dtype = np.float64
 
-        # Handle both numpy and cupy arrays, or convert from Python types
-        if hasattr(data, 'dtype'):  # numpy or cupy array
-            try:
-                self.data = xp.asarray(data, dtype=target_dtype)
-            except Exception:
-                self.data = xp.array(data, dtype=target_dtype)
+        if hasattr(data, 'dtype'):  
+            self.data = data.astype(target_dtype, copy=False)
         else:
             try:
-                self.data = xp.array(data, dtype=target_dtype)
+                self.data = np.array(data, dtype=target_dtype)
             except Exception as e:
                 raise TypeError(f"Could not convert data to Tensor. Error: {e}")
 
         self._op = _op
-        # Only Tensor children participate in the computation graph.
+
         self._prev: Set['Tensor'] = set(c for c in _children if isinstance(c, Tensor))
 
         if requires_grad is None:
@@ -80,11 +65,10 @@ class Tensor:
             self.requires_grad = bool(requires_grad)
 
         if self.requires_grad:
-            xp = get_array_module()
             grad_dtype = np.float64 if self.data.dtype not in [np.float64, np.float32] else self.data.dtype
-            self.grad: Optional[Any] = xp.zeros(self.data.shape, dtype=grad_dtype)
+            self.grad: Optional[Any] = np.zeros(self.data.shape, dtype=grad_dtype)
         else:
-            self.grad = None
+            self.grad: Optional[Any] = None
 
         self._backward = lambda: None
 
@@ -104,7 +88,6 @@ class Tensor:
     def dtype(self):
         """dtype property"""
         return self.data.dtype 
-
     def to(self, dtype: npt.DTypeLike) -> 'Tensor':
         """Cast the tensor to a new dtype, returning a **detached** copy.
 
@@ -148,7 +131,7 @@ class Tensor:
     def __repr__(self) -> str:
         """Return a human-readable string representation of the Tensor."""
         # Convert to numpy for display purposes
-        data_np = to_numpy(self.data)
+        data_np = np.asarray(self.data)
         data_str = np.array2string(data_np, max_line_width=70, precision=4, suppress_small=True)
         if '\n' in data_str:
             data_str = data_str.split('\n')[0] + '...]' # Show first line only if multi-line
@@ -158,28 +141,24 @@ class Tensor:
     def zero_grad(self) -> None:
         """Resets the gradient of this tensor to zero."""
         if self.requires_grad:
-            xp = get_array_module()
             grad_dtype = np.float64 if self.data.dtype not in [np.float64, np.float32] else self.data.dtype
-            self.grad = xp.zeros_like(self.data,dtype=grad_dtype)
+            self.grad = np.zeros_like(self.data, dtype=grad_dtype)
 
     
     @classmethod
     def zeros(cls, *shape: int, requires_grad: bool = False, dtype: Optional[npt.DTypeLike] = None) -> 'Tensor':
         """Create a tensor filled with zeros."""
-        xp = get_array_module()
-        return cls(xp.zeros(shape), requires_grad=requires_grad, dtype=dtype)
+        return cls(np.zeros(shape), requires_grad=requires_grad, dtype=dtype)
 
     @classmethod
     def ones(cls, *shape: int, requires_grad: bool = False, dtype: Optional[npt.DTypeLike] = None) -> 'Tensor':
         """Create a tensor filled with ones."""
-        xp = get_array_module()
-        return cls(xp.ones(shape), requires_grad=requires_grad, dtype=dtype)
+        return cls(np.ones(shape), requires_grad=requires_grad, dtype=dtype)
 
     @classmethod
     def randn(cls, *shape: int, requires_grad: bool = False, dtype: Optional[npt.DTypeLike] = None) -> 'Tensor':
         """Create a tensor filled with random numbers from a standard normal distribution."""
-        xp = get_array_module()
-        data = xp.random.randn(*shape).astype(dtype=dtype if dtype else np.float32)
+        data = np.random.randn(*shape).astype(dtype=dtype if dtype else np.float32)
         return cls(data, requires_grad=requires_grad, dtype=dtype)
 
     @classmethod
@@ -187,16 +166,14 @@ class Tensor:
         """Create a tensor of zeros with the same shape as *tensor*."""
         if requires_grad is None:
             requires_grad = tensor.requires_grad
-        xp = get_array_module()
-        return cls(xp.zeros_like(tensor.data), requires_grad=requires_grad, dtype=dtype)
+        return cls(np.zeros_like(tensor.data), requires_grad=requires_grad, dtype=dtype)
 
     @classmethod
     def ones_like(cls, tensor: 'Tensor', requires_grad: Optional[bool] = None, dtype: Optional[npt.DTypeLike] = None) -> 'Tensor':
         """Create a tensor of ones with the same shape as *tensor*."""
         if requires_grad is None:
             requires_grad = tensor.requires_grad
-        xp = get_array_module()
-        return cls(xp.ones_like(tensor.data), requires_grad=requires_grad, dtype=dtype)
+        return cls(np.ones_like(tensor.data), requires_grad=requires_grad, dtype=dtype)
 
     def __add__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':
         """Element-wise addition (``self + other``).
@@ -337,11 +314,10 @@ class Tensor:
             out = Tensor(self.data @ other.data, (self, other), '@', dtype=dtype)
 
             def _backward():
-               xp = get_array_module()
                if self.requires_grad:
                     # CASE A: 'other' is a Matrix (2D+)
                     if other.data.ndim > 1:
-                        other_transposed = xp.swapaxes(other.data, -1, -2)
+                        other_transposed = np.swapaxes(other.data, -1, -2)
                         self_grad_contrib = out.grad @ other_transposed
                     
                     # CASE B: 'other' is a Vector (1D)
@@ -351,14 +327,14 @@ class Tensor:
                             self_grad_contrib = out.grad * other.data
                         # If result is vector (Matrix @ Vector), outer product
                         else:
-                            self_grad_contrib = xp.outer(out.grad, other.data)
+                            self_grad_contrib = np.outer(out.grad, other.data)
 
                     self.grad += Tensor.unbroadcast(self_grad_contrib, self.data.shape)
 
                if other.requires_grad:
                     # CASE A: 'self' is a Matrix (2D+)
                     if self.data.ndim > 1:
-                        self_transposed = xp.swapaxes(self.data, -1, -2)
+                        self_transposed = np.swapaxes(self.data, -1, -2)
                         other_grad_contrib = self_transposed @ out.grad
                     
                     # CASE B: 'self' is a Vector (1D)
@@ -370,7 +346,7 @@ class Tensor:
                         else:
                             # Note: This case (Vector @ Matrix) usually results in a vector,
                             # requiring the outer product of self and grad.
-                            other_grad_contrib = xp.outer(self.data, out.grad)
+                            other_grad_contrib = np.outer(self.data, out.grad)
 
                     other.grad += Tensor.unbroadcast(other_grad_contrib, other.data.shape)
 
@@ -379,20 +355,19 @@ class Tensor:
             return out 
  
     def sum(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims: bool = False) -> 'Tensor':
-        xp = get_array_module()
-        out_data = xp.sum(self.data, axis=axis, keepdims=keepdims)
+        out_data = np.sum(self.data, axis=axis, keepdims=keepdims)
         out = Tensor(out_data, (self,), 'sum',dtype=self.data.dtype)
         
         def _backward():
             if self.requires_grad:
                 if axis is None: # in this case only one number is in the out `Tensor`
-                    grad_expanded = xp.ones_like(self.data) * out.grad
+                    grad_expanded = np.ones_like(self.data) * out.grad
                 else:
                     if keepdims:
                         grad_to_expand = out.grad 
                     else:
-                        grad_to_expand = xp.expand_dims(out.grad, axis=axis)
-                    grad_expanded = xp.ones_like(self.data) * grad_to_expand
+                        grad_to_expand = np.expand_dims(out.grad, axis=axis)
+                    grad_expanded = np.ones_like(self.data) * grad_to_expand
                 
                 self.grad += grad_expanded
         
@@ -416,8 +391,7 @@ class Tensor:
         
 
     def exp(self) -> 'Tensor':
-        xp = get_array_module()
-        out_data = xp.exp(self.data)
+        out_data = np.exp(self.data)
         out = Tensor(out_data, (self,), 'exp') 
         
         def _backward():
@@ -429,12 +403,11 @@ class Tensor:
         return out
     def log(self) -> 'Tensor':
         """Natural logarithm (ln)."""
-        xp = get_array_module()
         # Convert to numpy for checking (scalar check)
-        if not np.all(to_numpy(self.data) > 0):
+        if not np.all(np.asarray(self.data) > 0):
             warnings.warn("Log applied to non-positive elements",RuntimeWarning,stacklevel=2)
         
-        out = Tensor(xp.log(self.data), (self,), 'ln') 
+        out = Tensor(np.log(self.data), (self,), 'ln') 
         
         def _backward():
             if self.requires_grad:
@@ -447,13 +420,12 @@ class Tensor:
     
     def sqrt(self) -> 'Tensor':
         """Square root"""
-        xp = get_array_module()
-        out = Tensor(xp.sqrt(self.data), (self,), 'sqrt')
+        out = Tensor(np.sqrt(self.data), (self,), 'sqrt')
         
         def _backward():
             if self.requires_grad:
                 # d/dx(sqrt(x)) = 1 / (2 * sqrt(x))
-                self.grad += (0.5 / (xp.sqrt(self.data) + 1e-8)) * out.grad
+                self.grad += (0.5 / (np.sqrt(self.data) + 1e-8)) * out.grad
         
         if out.requires_grad:
             out._backward = _backward
@@ -463,8 +435,7 @@ class Tensor:
         """
         Clips the tensor values to be within [min_val, max_val].
         """
-        xp = get_array_module()
-        out = Tensor(xp.clip(self.data, min_val, max_val), (self,), 'clip')
+        out = Tensor(np.clip(self.data, min_val, max_val), (self,), 'clip')
 
         def _backward():
             if self.requires_grad:
@@ -478,11 +449,10 @@ class Tensor:
 
     def log10(self) -> 'Tensor':
         """Base-10 logarithm."""
-        xp = get_array_module()
-        if not np.all(to_numpy(self.data) > 0):
+        if not np.all(np.asarray(self.data) > 0):
             warnings.warn("Log10 applied to non-positive elements", RuntimeWarning, stacklevel=2)
         
-        out = Tensor(xp.log10(self.data), (self,), 'log10') 
+        out = Tensor(np.log10(self.data), (self,), 'log10') 
         
         def _backward():
             if self.requires_grad:
@@ -500,8 +470,7 @@ class Tensor:
 
         Reference: https://arxiv.org/abs/1803.08375
         """
-        xp = get_array_module()
-        out = Tensor(xp.maximum(self.data, 0), (self,), 'relu')
+        out = Tensor(np.maximum(self.data, 0), (self,), 'relu')
         
         def _backward():
             if self.requires_grad:
@@ -516,29 +485,27 @@ class Tensor:
 
         Reference: https://arxiv.org/abs/1505.00853
         """
-        xp = get_array_module()
-        out = Tensor(xp.where(self.data > 0, self.data, alpha * self.data), (self,), 'leaky_relu')
+        out = Tensor(np.where(self.data > 0, self.data, alpha * self.data), (self,), 'leaky_relu')
         
         def _backward():
             if self.requires_grad:
-                self.grad += xp.where(self.data > 0, 1, alpha) * out.grad
+                self.grad += np.where(self.data > 0, 1, alpha) * out.grad
         
         if out.requires_grad:
             out._backward = _backward
         return out
 
     def elu(self, alpha: float = 1.0) -> 'Tensor':
-        """Exponential Linear Unit: ``x`` if ``x > 0``, else ``alpha * (exp(x) - 1)``.
+        """Enponential Linear Unit: ``x`` if ``x > 0``, else ``alpha * (exp(x) - 1)``.
 
         Reference: https://arxiv.org/abs/1511.07289
         """
-        xp = get_array_module()
-        out = Tensor(xp.where(self.data > 0, self.data, alpha * (xp.exp(self.data) - 1)), (self,), 'elu')
+        out = Tensor(np.where(self.data > 0, self.data, alpha * (np.exp(self.data) - 1)), (self,), 'elu')
         
         def _backward():
             if self.requires_grad:
                 # d/dx(alpha * (exp(x) - 1)) = alpha * exp(x)
-                self.grad += xp.where(self.data > 0, 1, alpha * xp.exp(self.data)) * out.grad
+                self.grad += np.where(self.data > 0, 1, alpha * np.exp(self.data)) * out.grad
         
         if out.requires_grad:
             out._backward = _backward
@@ -549,12 +516,11 @@ class Tensor:
 
         Reference: https://arxiv.org/abs/1706.02515
         """
-        xp = get_array_module()
-        out = Tensor(scale * xp.where(self.data > 0, self.data, alpha * (xp.exp(self.data) - 1)), (self,), 'selu')
+        out = Tensor(scale * np.where(self.data > 0, self.data, alpha * (np.exp(self.data) - 1)), (self,), 'selu')
         
         def _backward():
             if self.requires_grad:
-                self.grad += scale * xp.where(self.data > 0, 1, alpha * xp.exp(self.data)) * out.grad
+                self.grad += scale * np.where(self.data > 0, 1, alpha * np.exp(self.data)) * out.grad
         
         if out.requires_grad:
             out._backward = _backward
@@ -565,30 +531,21 @@ class Tensor:
 
         Reference: https://arxiv.org/abs/1606.08415
         """
-        xp = get_array_module()
         # scipy.special.erf works with numpy arrays, so convert if needed
-        data_np = to_numpy(self.data)
+        data_np = np.asarray(self.data)
         erf_result = sp.erf(data_np / np.sqrt(2))
-        # Convert back to device array
-        if xp is not np:
-            erf_result = xp.asarray(erf_result)
         out_data = 0.5 * self.data * (1 + erf_result)
         out = Tensor(out_data, (self,), 'gelu')
         
         def _backward():
             if self.requires_grad:
-                xp_backward = get_array_module()
                 # np.sqrt and np.pi are constants
                 sqrt_2pi = np.sqrt(2 * np.pi)
-                data_np = to_numpy(self.data)
+                data_np = np.asarray(self.data)
                 cdf_np = 0.5 * (1 + sp.erf(data_np / np.sqrt(2)))
                 pdf_np = (1 / sqrt_2pi) * np.exp(-0.5 * data_np ** 2)
-                if xp_backward is not np:
-                    cdf = xp_backward.asarray(cdf_np)
-                    pdf = xp_backward.asarray(pdf_np)
-                else:
-                    cdf = cdf_np
-                    pdf = pdf_np
+                cdf = cdf_np
+                pdf = pdf_np
                 self.grad += (cdf + self.data * pdf) * out.grad
         
         if out.requires_grad:
@@ -601,11 +558,10 @@ class Tensor:
         Uses a numerically stable formulation that avoids overflow for
         large negative values.
         """
-        xp = get_array_module()
         # Numerically stable sigmoid
-        sig = xp.where(self.data >= 0, 
-                       1 / (1 + xp.exp(-self.data)), 
-                       xp.exp(self.data) / (1 + xp.exp(self.data)))
+        sig = np.where(self.data >= 0, 
+                       1 / (1 + np.exp(-self.data)), 
+                       np.exp(self.data) / (1 + np.exp(self.data)))
         out = Tensor(sig, (self,), 'sigmoid')
         
         def _backward():
@@ -630,8 +586,7 @@ class Tensor:
 
     def tanh(self) -> 'Tensor':
         """Hyperbolic tangent activation."""
-        xp = get_array_module()
-        t = xp.tanh(self.data)
+        t = np.tanh(self.data)
         out = Tensor(t, (self,), 'tanh')
         
         def _backward():
@@ -647,10 +602,9 @@ class Tensor:
 
         Uses the log-sum-exp trick for numerical stability.
         """
-        xp = get_array_module()
         # Log-sum-exp trick for numerical stability
         max_val = self.data.max(axis=axis, keepdims=True)
-        e_x = xp.exp(self.data - max_val) # Subtract max for stability
+        e_x = np.exp(self.data - max_val) # Subtract max for stability
         sum_e_x = e_x.sum(axis=axis, keepdims=True)
         sm = e_x / (sum_e_x + 1e-8) # Add epsilon for safety
         
@@ -675,11 +629,10 @@ class Tensor:
 
     def log_softmax(self, axis: int = -1) -> 'Tensor':
         """Log-softmax: numerically stable ``log(softmax(x))`` along *axis*."""
-        xp = get_array_module()
         # Stable LogSoftmax
         max_val = self.data.max(axis=axis, keepdims=True)
         x_minus_max = self.data - max_val
-        log_sum_exp = xp.log(xp.exp(x_minus_max).sum(axis=axis, keepdims=True) + 1e-8)
+        log_sum_exp = np.log(np.exp(x_minus_max).sum(axis=axis, keepdims=True) + 1e-8)
         log_sm = x_minus_max - log_sum_exp
         
         out = Tensor(log_sm, (self,), 'log_softmax')
@@ -689,7 +642,7 @@ class Tensor:
                 # VJP for LogSoftmax:
                 # dL/dx_i = dL/dy_i - exp(y_i) * sum_j(dL/dy_j)
                 g = out.grad
-                sm = xp.exp(out.data) # = softmax(x)
+                sm = np.exp(out.data) # = softmax(x)
                 grad_contrib = g - sm * g.sum(axis=axis, keepdims=True)
                 self.grad += grad_contrib
                 
@@ -784,14 +737,13 @@ class Tensor:
         The mask tensor must be broadcastable to the shape of this tensor
         and should contain boolean values.
         """
-        xp = get_array_module()
-        out_data = xp.where(mask.data, fill_value, self.data)
+        out_data = np.where(mask.data, fill_value, self.data)
         out = Tensor(out_data, (self,), 'masked_fill')
         
         def _backward():
             # 3. Backward Pass
             if self.requires_grad:
-                grad_for_self = xp.where(mask.data, 0.0, out.grad)
+                grad_for_self = np.where(mask.data, 0.0, out.grad)
                 
                 # Add the gradient to the parent.
                 self.grad += grad_for_self
@@ -822,8 +774,7 @@ class Tensor:
             axes: Order of axes for the transposition.  If ``None``,
                 reverses the order of all dimensions.
         """
-        xp = get_array_module()
-        out = Tensor(xp.transpose(self.data, axes=axes), (self,), 'transpose')
+        out = Tensor(np.transpose(self.data, axes=axes), (self,), 'transpose')
         
         def _backward():
             if self.requires_grad:
@@ -831,7 +782,7 @@ class Tensor:
                     inverse_axes = None 
                 else:
                     inverse_axes = tuple(np.argsort(axes))
-                self.grad += xp.transpose(out.grad, axes=inverse_axes)
+                self.grad += np.transpose(out.grad, axes=inverse_axes)
         
         if out.requires_grad:
             out._backward = _backward
@@ -885,10 +836,9 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                xp = get_array_module()
                 # Create a grad array of zeros and "scatter" out.grad
                 # into the locations specified by the slice
-                grad_slice = xp.zeros_like(self.data)
+                grad_slice = np.zeros_like(self.data)
                 grad_slice[slices] = out.grad
                 self.grad += grad_slice
         
@@ -920,8 +870,7 @@ class Tensor:
         
         # --- Initialize Gradients ---
         # 1. Set the seed gradient for the output tensor to 1
-        xp = get_array_module()
-        self.grad = xp.ones_like(self.data)
+        self.grad = np.ones_like(self.data)
         
         # 2. Ensure all other tensors in the graph have zeroed gradients
         #    (This is technically optional if zero_grad() is used, but safer)
@@ -929,7 +878,7 @@ class Tensor:
             if node is not self and node.grad is not None:
                 node.grad.fill(0.0)
             elif node.grad is None and node.requires_grad: # Should not happen, but safeguard
-                node.grad = xp.zeros_like(node.data)
+                node.grad = np.zeros_like(node.data)
 
         # --- Propagate Gradients ---
         for node in reversed(topo):

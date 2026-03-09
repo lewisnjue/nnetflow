@@ -8,18 +8,6 @@ from .losses import (
     logits_binary_cross_entropy_loss
 )
 from .optim import SGD, Adam
-from .device import (
-    Device,
-    get_device,
-    set_device,
-    get_array_module,
-    is_gpu_available,
-    get_gpu_count,
-    get_gpu_name,
-    gpu_supports_dtype,
-    to_numpy,
-    to_cupy
-)
 try:
     from importlib.metadata import version, PackageNotFoundError
 except Exception:  # pragma: no cover
@@ -47,15 +35,5 @@ __all__ = [
     'binary_cross_entropy_loss',
     'logits_binary_cross_entropy_loss',
     'SGD', 
-    'Adam',
-    'Device',
-    'get_device',
-    'set_device',
-    'get_array_module',
-    'is_gpu_available',
-    'get_gpu_count',
-    'get_gpu_name',
-    'gpu_supports_dtype',
-    'to_numpy',
-    'to_cupy'
+    'Adam'
 ]
