@@ -46,7 +46,6 @@ class MultiHeadAttention(Module):
         self.W_value = layers.Linear(d_in, d_out, bias=qkv_bias)
         self.out_proj = layers.Linear(d_out, d_out)
         self.dropout = layers.Dropout(dropout)
-        np = get_array_module()
         mask = np.triu(np.ones((context_length, context_length)), k=1)
         self.mask = Tensor(mask, requires_grad=False)
 
