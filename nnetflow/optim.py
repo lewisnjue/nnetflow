@@ -45,12 +45,63 @@ class SGD(Module):
         for param in self.params:
             if hasattr(param, 'zero_grad'):
                 param.zero_grad()
+    
+    def state_dict(self, prefix=""):
+        state = {}
+        state[f"{prefix}.lr"] = self.lr 
+        state[f"{prefix}.momentum"] = self.momentum
+        state[f"{prefix}.nesterov"] = self.nesterov 
+        for i, velocity in enumerate(self.velocities):
+            state[f"{prefix}.velocity.{i}"] = velocity.data
+        return state
 
     def __repr__(self) -> str:
         return f"SGD(lr={self.lr}, momentum={self.momentum})"
     def __str__(self) -> str:
         return f"SGD Optimizer: lr={self.lr}, momentum={self.momentum}"
 
+
+class Adagrad(Module): 
+    """Adagrad optimizer.""" 
+    def __init__(self,params:List[Tensor],lr:float=0.01,eps:float=1e-8) -> None:
+        self.params = params
+        self.lr = lr
+        self.eps = eps
+        self.accumulators = [Tensor.zeros_like(p) for p in params]
+    
+    def forward(self, *args, **kwargs):
+        return None 
+    
+    def step(self) -> None: 
+        for i, parm in enumerate(self.params): 
+            if not parm.requires_grad: 
+                continue 
+            if parm.grad is None: 
+                continue 
+            self.accumulators[i].data += parm.grad ** 2 
+            adjusted_lr = self.lr / (self.accumulators[i].data ** 0.5 + self.eps) 
+            parm.data -= adjusted_lr * parm.grad 
+    
+    def zero_grad(self) -> None:
+        """Zero gradients for all parameters."""
+        for param in self.params:
+            if hasattr(param, 'zero_grad'):
+                param.zero_grad()
+    
+    def state_dict(self, prefix=""):
+        state = {}
+        state[f"{prefix}.lr"] = self.lr 
+        state[f"{prefix}.eps"] = self.eps
+        for i, acc in enumerate(self.accumulators):
+            state[f"{prefix}.accumulator.{i}"] = acc.data
+        return state
+    
+
+
+    def __repr__(self) -> str:
+        return f"Adagrad(lr={self.lr}, eps={self.eps})"
+    def __str__(self) -> str:
+        return f"Adagrad Optimizer: lr={self.lr}, eps={self.eps}"
 
 class Adam(Module):
     """
