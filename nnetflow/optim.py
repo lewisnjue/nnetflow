@@ -3,28 +3,42 @@ from typing import List
 from nnetflow.module import Module
 class SGD(Module):
     """Stochastic Gradient Descent optimizer with optional momentum."""
-    def __init__(self, params: List[Tensor], lr: float = 0.01, momentum: float = 0.0) -> None:
+    def __init__(self, params: List[Tensor], lr: float = 0.01, momentum: float = 0.0,nesterov=False) -> None:
         self.params = params
         self.lr = lr
         self.momentum = momentum
+        self.nesterov= nesterov
         self.velocities = [Tensor.zeros_like(p) for p in params]
     
 
     def forward(self, *args, **kwargs):
         return None
 
-    def step(self) -> None:
-        """Apply one optimization step to all parameters."""
+    def step(self):
         for i, param in enumerate(self.params):
-            if param.requires_grad is False:
-                continue # just for safety because some will not require grad in training model like batchnorm layer :) 
+            if not param.requires_grad:
+                continue
             if param.grad is None:
                 continue
-            if self.momentum > 0:
-                self.velocities[i] = self.momentum * self.velocities[i] - self.lr * param.grad
+            grad = param.grad
+            if self.nesterov and self.momentum > 0:
+                prev_velocity = self.velocities[i].data.copy()
+                self.velocities[i].data = (
+                    self.momentum * self.velocities[i].data
+                    - self.lr * grad
+                )
+                param.data += (
+                    -self.momentum * prev_velocity
+                    + (1 + self.momentum) * self.velocities[i].data
+                )
+            elif self.momentum > 0:
+                self.velocities[i].data = (
+                    self.momentum * self.velocities[i].data
+                    - self.lr * grad
+                )
                 param.data += self.velocities[i].data
             else:
-                param.data -= self.lr * param.grad
+                param.data -= self.lr * grad
 
     def zero_grad(self) -> None:
         """Zero gradients for all parameters."""
