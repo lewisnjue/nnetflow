@@ -103,6 +103,42 @@ class Adagrad(Module):
     def __str__(self) -> str:
         return f"Adagrad Optimizer: lr={self.lr}, eps={self.eps}"
 
+class RMSProp(Module): 
+    """ RMSProp optimizer.""" 
+    def __init__(self, params: List[Tensor], lr: float = 0.01, beta: float = 0.9, eps: float = 1e-8) -> None:
+        self.params = params
+        self.lr = lr
+        self.beta = beta
+        self.eps = eps
+        self.squared_avg = [Tensor.zeros_like(p) for p in params]
+    
+    def forward(self, *args, **kwargs):
+        return None
+    
+    def step(self) -> None: 
+        for i, param in enumerate(self.params): 
+            if not param.requires_grad: 
+                continue 
+            if param.grad is None: 
+                continue 
+            self.squared_avg[i].data = self.beta * self.squared_avg[i].data + (1 - self.beta) * (param.grad ** 2) 
+            adjusted_lr = self.lr / (self.squared_avg[i].data ** 0.5 + self.eps) 
+            param.data -= adjusted_lr * param.grad
+
+    def state_dict(self, prefix=""):
+        state = {}
+        state[f"{prefix}.lr"] = self.lr 
+        state[f"{prefix}.beta"] = self.beta
+        state[f"{prefix}.eps"] = self.eps
+        for i, sq_avg in enumerate(self.squared_avg):
+            state[f"{prefix}.squared_avg.{i}"] = sq_avg.data
+        return state
+
+    def __repr__(self) -> str:
+        return f"RMSProp(lr={self.lr}, beta={self.beta}, eps={self.eps})"
+    def __str__(self) -> str:
+        return f"RMSProp Optimizer: lr={self.lr}, beta={self.beta}, eps={self.eps}"
+
 class Adam(Module):
     """
     Adam optimizer.
@@ -133,6 +169,18 @@ class Adam(Module):
             state[f"{prefix}.m.{i}"] = m_i.data
             state[f"{prefix}.v.{i}"] = v_i.data
         return state
+    
+    def zero_grad(self) -> None:
+        """Zero gradients for all parameters."""
+        for param in self.params:
+            if hasattr(param, 'zero_grad'):
+                param.zero_grad() 
+    
+    def __str__(self) -> str:
+        return f"Adam Optimizer: lr={self.lr}, beta1={self.beta1}, beta2={self.beta2}, eps={self.eps}" 
+    
+    def __repr__(self) -> str:
+        return f"Adam(lr={self.lr}, beta1={self.beta1}, beta2={self.beta2}, eps={self.eps})" 
 
     def step(self) -> None:
         """Apply one optimization step to all parameters with bias correction."""
