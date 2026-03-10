@@ -3,13 +3,18 @@ from typing import List
 from nnetflow.module import Module
 class SGD(Module):
     """Stochastic Gradient Descent optimizer with optional momentum."""
-    def __init__(self, params: List[Tensor], lr: float = 0.01, momentum: float = 0.0,nesterov=False,use_max_norm:bool = False,r: float = 1.0) -> None:
+    def __init__(self, params: List[Tensor],
+     lr: float = 0.01, momentum: float = 0.0,
+     nesterov=False,use_max_norm:bool = False,
+     r: float = 1.0,grad_clip:bool = False,clip_value: float = 1.0) -> None:
         self.params = params
         self.lr = lr
         self.momentum = momentum
         self.nesterov= nesterov 
         self.use_max_norm = use_max_norm 
         self.r = r 
+        self.grad_clip = grad_clip
+        self.clip_value = clip_value
         self.velocities = [Tensor.zeros_like(p) for p in params]
     
 
@@ -23,6 +28,10 @@ class SGD(Module):
             if param.grad is None:
                 continue
             grad = param.grad
+            if self.grad_clip: 
+                grad_norm = np.linalg.norm(grad.data) 
+                if grad_norm > self.clip_value: 
+                    grad.data = grad.data * (self.clip_value / grad_norm)
             if self.nesterov and self.momentum > 0:
                 prev_velocity = self.velocities[i].data.copy()
                 self.velocities[i].data = (
@@ -58,6 +67,10 @@ class SGD(Module):
         state[f"{prefix}.lr"] = self.lr 
         state[f"{prefix}.momentum"] = self.momentum
         state[f"{prefix}.nesterov"] = self.nesterov 
+        state[f"{prefix}.use_max_norm"] = self.use_max_norm
+        state[f"{prefix}.r"] = self.r
+        state[f"{prefix}.grad_clip"] = self.grad_clip
+        state[f"{prefix}.clip_value"] = self.clip_value
         for i, velocity in enumerate(self.velocities):
             state[f"{prefix}.velocity.{i}"] = velocity.data
         return state
@@ -70,13 +83,16 @@ class SGD(Module):
 
 class Adagrad(Module): 
     """Adagrad optimizer.""" 
-    def __init__(self,params:List[Tensor],lr:float=0.01,eps:float=1e-8,use_max_norm:bool = False,r: float = 1.0) -> None:
+    def __init__(self,params:List[Tensor],lr:float=0.01,
+    eps:float=1e-8,use_max_norm:bool = False,r: float = 1.0,grad_clip:bool = False,clip_value: float = 1.0) -> None:
         self.params = params
         self.lr = lr
         self.eps = eps
         self.accumulators = [Tensor.zeros_like(p) for p in params]
         self.use_max_norm = use_max_norm
         self.r = r
+        self.grad_clip = grad_clip 
+        self.clip_value = clip_value 
     
     def forward(self, *args, **kwargs):
         return None 
@@ -87,6 +103,10 @@ class Adagrad(Module):
                 continue 
             if parm.grad is None: 
                 continue 
+            if self.grad_clip:
+                grad_norm = np.linalg.norm(parm.grad.data) 
+                if grad_norm > self.clip_value: 
+                    parm.grad.data = parm.grad.data * (self.clip_value / grad_norm)
             self.accumulators[i].data += parm.grad ** 2 
             adjusted_lr = self.lr / (self.accumulators[i].data ** 0.5 + self.eps) 
             parm.data -= adjusted_lr * parm.grad 
@@ -106,6 +126,10 @@ class Adagrad(Module):
         state = {}
         state[f"{prefix}.lr"] = self.lr 
         state[f"{prefix}.eps"] = self.eps
+        state[f"{prefix}.grad_clip"] = self.grad_clip
+        state[f"{prefix}.clip_value"] = self.clip_value
+        state[f"{prefix}.use_max_norm"] = self.use_max_norm
+        state[f"{prefix}.r"] = self.r
         for i, acc in enumerate(self.accumulators):
             state[f"{prefix}.accumulator.{i}"] = acc.data
         return state
@@ -119,7 +143,10 @@ class Adagrad(Module):
 
 class RMSProp(Module): 
     """ RMSProp optimizer.""" 
-    def __init__(self, params: List[Tensor], lr: float = 0.01, beta: float = 0.9, eps: float = 1e-8, use_max_norm: bool = False, r: float = 1.0) -> None:
+    def __init__(self, params: List[Tensor], lr: float = 0.01,
+     beta: float = 0.9, eps: float = 1e-8, use_max_norm: bool = False,
+      r: float = 1.0,grad_clip:bool = False,clip_value: float = 1.0) -> None:
+            grad = parm.grad
         self.params = params
         self.lr = lr
         self.beta = beta
@@ -127,6 +154,8 @@ class RMSProp(Module):
         self.squared_avg = [Tensor.zeros_like(p) for p in params]
         self.use_max_norm = use_max_norm
         self.r = r
+        self.grad_clip = grad_clip
+        self.clip_value = clip_value
     
     def forward(self, *args, **kwargs):
         return None
@@ -137,6 +166,10 @@ class RMSProp(Module):
                 continue 
             if param.grad is None: 
                 continue 
+            if self.grad_clip:
+                grad_norm = np.linalg.norm(param.grad.data) 
+                if grad_norm > self.clip_value: 
+                    param.grad.data = param.grad.data * (self.clip_value / grad_norm)
             self.squared_avg[i].data = self.beta * self.squared_avg[i].data + (1 - self.beta) * (param.grad ** 2) 
             adjusted_lr = self.lr / (self.squared_avg[i].data ** 0.5 + self.eps) 
             param.data -= adjusted_lr * param.grad
@@ -152,6 +185,8 @@ class RMSProp(Module):
         state[f"{prefix}.eps"] = self.eps
         state[f"{prefix}.use_max_norm"] = self.use_max_norm
         state[f"{prefix}.r"] = self.r
+        state[f"{prefix}.grad_clip"] = self.grad_clip
+        state[f"{prefix}.clip_value"] = self.clip_value 
         for i, sq_avg in enumerate(self.squared_avg):
             state[f"{prefix}.squared_avg.{i}"] = sq_avg.data
         return state
@@ -166,7 +201,9 @@ class Adam(Module):
     Adam optimizer.
     link to the paper: https://arxiv.org/abs/1412.6980
     """
-    def __init__(self, params: List[Tensor], lr: float = 0.001, beta1: float = 0.9, beta2: float = 0.999, eps: float = 1e-8, use_max_norm: bool = False, r: float = 1.0) -> None:
+    def __init__(self, params: List[Tensor], lr: float = 0.001, 
+    beta1: float = 0.9, beta2: float = 0.999, eps: float = 1e-8,
+     use_max_norm: bool = False, r: float = 1.0,grad_clip:bool = False,clip_value: float = 1.0) -> None:
         self.params = params
         self.lr = lr
         self.beta1 = beta1
@@ -174,6 +211,8 @@ class Adam(Module):
         self.eps = eps
         self.use_max_norm = use_max_norm
         self.r = r
+        self.grad_clip = grad_clip
+        self.clip_value = clip_value
         self.m = [Tensor.zeros_like(p) for p in params]
         self.v = [Tensor.zeros_like(p) for p in params]
         self.t = 0
@@ -189,6 +228,8 @@ class Adam(Module):
         state[f"{prefix}.beta2"] = self.beta2
         state[f"{prefix}.eps"] = self.eps
         state[f"{prefix}.t"] = self.t
+        state[f"{prefix}.grad_clip"] = self.grad_clip
+        state[f"{prefix}.clip_value"] = self.clip_value
         for i, (m_i, v_i) in enumerate(zip(self.m, self.v)):
             state[f"{prefix}.m.{i}"] = m_i.data
             state[f"{prefix}.v.{i}"] = v_i.data
@@ -214,6 +255,10 @@ class Adam(Module):
                 continue 
             if param.grad is None:
                 continue
+            if self.grad_clip:
+                grad_norm = np.linalg.norm(param.grad.data) 
+                if grad_norm > self.clip_value: 
+                    param.grad.data = param.grad.data * (self.clip_value / grad_norm)
             self.m[i].data = self.beta1 * self.m[i].data + (1 - self.beta1) * param.grad
             self.v[i].data = self.beta2 * self.v[i].data + (1 - self.beta2) * (param.grad ** 2)
             m_hat = self.m[i].data / (1 - self.beta1 ** self.t)
