@@ -540,6 +540,9 @@ class Dropout(Module):
     During training, randomly zeroes elements of the input with probability
     ``p`` and scales the remaining values by ``1 / (1 - p)`` so that the
     expected sum is unchanged.  During evaluation, this layer is a no-op.
+    
+    You need to make sure you dont apply dropout to the output Layer of the Model 
+
     """
     def __init__(self, p: float = 0.5) -> None:
         """
@@ -550,7 +553,8 @@ class Dropout(Module):
         assert 0.0 <= p < 1.0, "Dropout probability must be in [0.0, 1.0) range"
         self.p = p
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, training: bool=False) -> Tensor:
+        self.training = training 
         if not self.training:
             return x
         mask = (np.random.rand(*x.data.shape) > self.p).astype(np.float32)
@@ -558,6 +562,16 @@ class Dropout(Module):
         scale = 1.0 / (1.0 - self.p)
         return (x * mask_tensor) * scale
 
+
+class MCDropout(Dropout): 
+    """ 
+    in MCDroptout training is always true during training and inference 
+    """ 
+    def __init__(self,p=0.5):
+        super().__init__(p)  
+    
+    def forward(self,x:Tensor)  -> Tensor: 
+        super().forward(x,training = True)
 
 class Flatten(Module):
     """Flatten all dimensions except the batch dimension.
