@@ -3,11 +3,13 @@ from typing import List
 from nnetflow.module import Module
 class SGD(Module):
     """Stochastic Gradient Descent optimizer with optional momentum."""
-    def __init__(self, params: List[Tensor], lr: float = 0.01, momentum: float = 0.0,nesterov=False) -> None:
+    def __init__(self, params: List[Tensor], lr: float = 0.01, momentum: float = 0.0,nesterov=False,use_max_norm:bool = False,r: float = 1.0) -> None:
         self.params = params
         self.lr = lr
         self.momentum = momentum
-        self.nesterov= nesterov
+        self.nesterov= nesterov 
+        self.use_max_norm = use_max_norm 
+        self.r = r 
         self.velocities = [Tensor.zeros_like(p) for p in params]
     
 
@@ -40,6 +42,11 @@ class SGD(Module):
             else:
                 param.data -= self.lr * grad
 
+            if self.use_max_norm: 
+                norm = np.linalg.norm(param.data) # L2 norm 
+                if norm > self.r: 
+                    param.data = param.data * (self.r / norm)
+
     def zero_grad(self) -> None:
         """Zero gradients for all parameters."""
         for param in self.params:
@@ -63,11 +70,13 @@ class SGD(Module):
 
 class Adagrad(Module): 
     """Adagrad optimizer.""" 
-    def __init__(self,params:List[Tensor],lr:float=0.01,eps:float=1e-8) -> None:
+    def __init__(self,params:List[Tensor],lr:float=0.01,eps:float=1e-8,use_max_norm:bool = False,r: float = 1.0) -> None:
         self.params = params
         self.lr = lr
         self.eps = eps
         self.accumulators = [Tensor.zeros_like(p) for p in params]
+        self.use_max_norm = use_max_norm
+        self.r = r
     
     def forward(self, *args, **kwargs):
         return None 
@@ -81,6 +90,11 @@ class Adagrad(Module):
             self.accumulators[i].data += parm.grad ** 2 
             adjusted_lr = self.lr / (self.accumulators[i].data ** 0.5 + self.eps) 
             parm.data -= adjusted_lr * parm.grad 
+
+            if self.use_max_norm: 
+                norm = np.linalg.norm(parm.data) # L2 norm 
+                if norm > self.r: 
+                    parm.data = parm.data * (self.r / norm)
     
     def zero_grad(self) -> None:
         """Zero gradients for all parameters."""
@@ -105,12 +119,14 @@ class Adagrad(Module):
 
 class RMSProp(Module): 
     """ RMSProp optimizer.""" 
-    def __init__(self, params: List[Tensor], lr: float = 0.01, beta: float = 0.9, eps: float = 1e-8) -> None:
+    def __init__(self, params: List[Tensor], lr: float = 0.01, beta: float = 0.9, eps: float = 1e-8, use_max_norm: bool = False, r: float = 1.0) -> None:
         self.params = params
         self.lr = lr
         self.beta = beta
         self.eps = eps
         self.squared_avg = [Tensor.zeros_like(p) for p in params]
+        self.use_max_norm = use_max_norm
+        self.r = r
     
     def forward(self, *args, **kwargs):
         return None
@@ -124,12 +140,18 @@ class RMSProp(Module):
             self.squared_avg[i].data = self.beta * self.squared_avg[i].data + (1 - self.beta) * (param.grad ** 2) 
             adjusted_lr = self.lr / (self.squared_avg[i].data ** 0.5 + self.eps) 
             param.data -= adjusted_lr * param.grad
+            if self.use_max_norm: 
+                norm = np.linalg.norm(param.data) # L2 norm 
+                if norm > self.r: 
+                    param.data = param.data * (self.r / norm)
 
     def state_dict(self, prefix=""):
         state = {}
         state[f"{prefix}.lr"] = self.lr 
         state[f"{prefix}.beta"] = self.beta
         state[f"{prefix}.eps"] = self.eps
+        state[f"{prefix}.use_max_norm"] = self.use_max_norm
+        state[f"{prefix}.r"] = self.r
         for i, sq_avg in enumerate(self.squared_avg):
             state[f"{prefix}.squared_avg.{i}"] = sq_avg.data
         return state
@@ -144,12 +166,14 @@ class Adam(Module):
     Adam optimizer.
     link to the paper: https://arxiv.org/abs/1412.6980
     """
-    def __init__(self, params: List[Tensor], lr: float = 0.001, beta1: float = 0.9, beta2: float = 0.999, eps: float = 1e-8) -> None:
+    def __init__(self, params: List[Tensor], lr: float = 0.001, beta1: float = 0.9, beta2: float = 0.999, eps: float = 1e-8, use_max_norm: bool = False, r: float = 1.0) -> None:
         self.params = params
         self.lr = lr
         self.beta1 = beta1
         self.beta2 = beta2
         self.eps = eps
+        self.use_max_norm = use_max_norm
+        self.r = r
         self.m = [Tensor.zeros_like(p) for p in params]
         self.v = [Tensor.zeros_like(p) for p in params]
         self.t = 0
@@ -195,6 +219,10 @@ class Adam(Module):
             m_hat = self.m[i].data / (1 - self.beta1 ** self.t)
             v_hat = self.v[i].data / (1 - self.beta2 ** self.t)
             param.data -= self.lr * m_hat / (v_hat ** 0.5 + self.eps)
+            if self.use_max_norm: 
+                norm = np.linalg.norm(param.data) # L2 norm 
+                if norm > self.r: 
+                    param.data = param.data * (self.r / norm)
 
     def zero_grad(self) -> None:
         """Zero gradients for all parameters."""
