@@ -14,7 +14,7 @@ setup(
     url="https://github.com/lewisnjue/nnetflow",
     packages=find_packages(),
     # Keep in sync with pyproject.toml dependencies
-    install_requires=["numpy", "scipy>=1.9"],
+    install_requires=["numpy", "scipy>=1.9","graphviz>=0.21"],
     python_requires=">=3.8",
     include_package_data=True,
     classifiers=[
