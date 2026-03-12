@@ -1,6 +1,7 @@
 from nnetflow.engine import Tensor
 from typing import List
 from nnetflow.module import Module
+import numpy as np 
 class SGD(Module):
     """Stochastic Gradient Descent optimizer with optional momentum."""
     def __init__(self, params: List[Tensor],
@@ -146,7 +147,7 @@ class RMSProp(Module):
     def __init__(self, params: List[Tensor], lr: float = 0.01,
      beta: float = 0.9, eps: float = 1e-8, use_max_norm: bool = False,
       r: float = 1.0,grad_clip:bool = False,clip_value: float = 1.0) -> None:
-            grad = parm.grad
+        grad = parm.grad
         self.params = params
         self.lr = lr
         self.beta = beta

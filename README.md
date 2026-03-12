@@ -3,7 +3,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen)](https://github.com/lewisnjue/nnetflow/actions)
-
+![model image](./assets/model.png)
 nnetflow is a small, opinionated deep learning library implemented with NumPy for education and experimentation. It focuses on readability and a small, correct autodiff core so you can learn how deep learning frameworks work under the hood.
 
 Key design goals:

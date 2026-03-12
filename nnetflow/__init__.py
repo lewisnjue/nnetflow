@@ -7,6 +7,7 @@ from .losses import (
     binary_cross_entropy_loss,
     logits_binary_cross_entropy_loss
 )
+from .visualize import draw_dot, visualize_model
 from .optim import SGD, Adam
 try:
     from importlib.metadata import version, PackageNotFoundError
@@ -35,5 +36,7 @@ __all__ = [
     'binary_cross_entropy_loss',
     'logits_binary_cross_entropy_loss',
     'SGD', 
-    'Adam'
+    'Adam',
+    'draw_dot',
+    'visualize_model'
 ]
