@@ -327,7 +327,6 @@ class Conv1d(Module):
                     # Create a zero-padded array for the gradient
                     grad_x_padded = np.zeros_like(x_padded_data)
                     
-                    # ******** START OF FIX ********
                     # We cannot use the strided view for a scatter-add.
                     # We must loop manually.
                     for b in range(B):
@@ -339,7 +338,6 @@ class Conv1d(Module):
                                 
                                 # Add the gradient from this patch
                                 grad_x_padded[b, c, l_start:l_end] += grad_patches[b, c, l, :]
-                    # ******** END OF FIX ********
                     
                     # Un-pad the gradient to get dL/dx
                     if P > 0:
@@ -1098,3 +1096,186 @@ class MultiHeadAttention(Module):
     
     def __str__(self) -> str:
         return self.__repr__()
+
+
+class AveragePool2d(Module):
+    """
+    2D Average Pooling layer (channel-first: N,C,H,W)
+
+    Reduces spatial dimensions by taking the average value in each pooling window.
+
+    Supports:
+    - arbitrary kernel_size
+    - stride (defaults to kernel_size if not given)
+    - padding (usually 0 for average pooling)
+    - count_include_pad (whether to include padded zeros in the average)
+    """
+    def __init__(
+        self,
+        kernel_size: Union[int, Tuple[int, int]],
+        stride: Optional[Union[int, Tuple[int, int]]] = None,
+        padding: Union[int, Tuple[int, int]] = 0,
+        count_include_pad: bool = True,
+        dtype: Optional[npt.DTypeLike] = None
+    ) -> None:
+        super().__init__()
+
+        if isinstance(kernel_size, int):
+            self.kernel_size = (kernel_size, kernel_size)
+        else:
+            self.kernel_size = kernel_size
+
+        if stride is None:
+            self.stride = self.kernel_size
+        elif isinstance(stride, int):
+            self.stride = (stride, stride)
+        else:
+            self.stride = stride
+
+        if isinstance(padding, int):
+            self.padding = (padding, padding)
+        else:
+            self.padding = padding
+
+        self.count_include_pad = count_include_pad
+        self.dtype = dtype
+
+    def _get_patches_strided(self, x_data: np.ndarray) -> np.ndarray:
+        """Create strided view of all pooling windows (zero-copy when possible)."""
+        B, C, H_in_pad, W_in_pad = x_data.shape
+        kh, kw = self.kernel_size
+        sh, sw = self.stride
+
+        H_out = (H_in_pad - kh) // sh + 1
+        W_out = (W_in_pad - kw) // sw + 1
+
+        strides = x_data.strides
+        shape = (B, C, H_out, W_out, kh, kw)
+
+        new_strides = (
+            strides[0],
+            strides[1],
+            strides[2] * sh,
+            strides[3] * sw,
+            strides[2],
+            strides[3],
+        )
+
+        return np.lib.stride_tricks.as_strided(
+            x_data,
+            shape=shape,
+            strides=new_strides
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        assert len(x.shape) == 4, "Expected 4D input (N,C,H,W)"
+
+        B, C, H_in, W_in = x.shape
+        kh, kw = self.kernel_size
+        sh, sw = self.stride
+        ph, pw = self.padding
+
+        H_out = (H_in + 2 * ph - kh) // sh + 1
+        W_out = (W_in + 2 * pw - kw) // sw + 1
+
+        x_padded = np.pad(
+            x.data,
+            ((0, 0), (0, 0), (ph, ph), (pw, pw)),
+            mode="constant",
+            constant_values=0.0,
+        )
+
+        patches = self._get_patches_strided(x_padded)
+
+        if self.count_include_pad:
+            pooled = patches.mean(axis=(-2, -1))
+        else:
+            pooled = patches.mean(axis=(-2, -1))
+
+        out = Tensor(pooled, _children=(x,), _op="AvgPool2d")
+
+        if out.requires_grad:
+
+            def _backward():
+                grad_output = out.grad
+
+                if x.requires_grad:
+                    kh, kw = self.kernel_size
+                    area = kh * kw if self.count_include_pad else None
+
+                    grad_x_padded = np.zeros_like(x_padded)
+
+                    for b in range(B):
+                        for c in range(C):
+                            for ho in range(H_out):
+                                for wo in range(W_out):
+
+                                    h_start = ho * sh
+                                    w_start = wo * sw
+
+                                    window = grad_x_padded[
+                                        b, c,
+                                        h_start:h_start + kh,
+                                        w_start:w_start + kw
+                                    ]
+
+                                    if self.count_include_pad:
+                                        window += grad_output[b, c, ho, wo] / area
+                                    else:
+                                        # If not counting pad we'd need a mask
+                                        pass
+
+                    if ph > 0 or pw > 0:
+                        grad_x = grad_x_padded[:, :, ph:-ph if ph else None, pw:-pw if pw else None]
+                    else:
+                        grad_x = grad_x_padded
+
+                    x.grad += grad_x
+
+            out._backward = _backward
+
+        return out
+
+    def __repr__(self) -> str:
+        return (
+            f"AveragePool2d(kernel_size={self.kernel_size}, "
+            f"stride={self.stride}, padding={self.padding}, "
+            f"count_include_pad={self.count_include_pad})"
+        )
+
+
+class GlobalAveragePool2d(Module):
+    """
+    Global Average Pooling 2D – reduces H and W to 1×1 by averaging each channel.
+
+    Input:  (N, C, H, W)
+    Output: (N, C, 1, 1)
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x: Tensor) -> Tensor:
+        assert len(x.shape) == 4, "Expected input shape (N, C, H, W)"
+
+        out_data = x.data.mean(axis=(2, 3), keepdims=True)
+
+        out = Tensor(out_data, _children=(x,), _op="GlobalAvgPool2d")
+
+        if out.requires_grad:
+
+            def _backward():
+                if x.requires_grad:
+                    H, W = x.shape[2], x.shape[3]
+                    spatial_area = H * W
+
+                    grad_x = np.ones_like(x.data) * (out.grad / spatial_area)
+
+                    x.grad += grad_x
+
+            out._backward = _backward
+
+        return out
+
+    def __repr__(self) -> str:
+        return "GlobalAveragePool2d()"
