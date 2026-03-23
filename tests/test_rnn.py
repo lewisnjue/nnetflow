@@ -19,7 +19,7 @@ class TestRNNLayer:
     def test_rnn_forward_shapes_return_last(self):
         """RNN returns correct shape when return_sequence=False."""
         B, T, F, H = 4, 7, 5, 3
-        x = Tensor.randn(B, T, F, requires_grad=False)
+        x = Tensor.randn(B, T, F, requires_grad=False, dtype=np.float64)
 
         rnn = RNN(n_neurons=H, return_sequence=False)
         out = rnn(x)
@@ -30,7 +30,7 @@ class TestRNNLayer:
     def test_rnn_forward_shapes_return_sequence(self):
         """RNN returns correct shape when return_sequence=True."""
         B, T, F, H = 2, 5, 4, 6
-        x = Tensor.randn(B, T, F, requires_grad=False)
+        x = Tensor.randn(B, T, F, requires_grad=False, dtype=np.float64)
 
         rnn = RNN(n_neurons=H, return_sequence=True)
         out = rnn(x)
@@ -93,7 +93,7 @@ class TestRNNLayer:
         """Gradients for RNN parameters are non-None and have correct shapes."""
         np.random.seed(0)
         B, T, F, H = 3, 4, 5, 6
-        x = Tensor.randn(B, T, F, requires_grad=False)
+        x = Tensor.randn(B, T, F, requires_grad=False, dtype=np.float64)
 
         rnn = RNN(n_neurons=H, return_sequence=False)
         y = rnn(x)
@@ -115,8 +115,8 @@ class TestRNNLayer:
     def test_rnn_input_feature_mismatch_raises(self):
         """RNN raises assertion if feature dimension changes after init."""
         B, T, F, H = 2, 3, 4, 5
-        x1 = Tensor.randn(B, T, F, requires_grad=False)
-        x2 = Tensor.randn(B, T, F + 1, requires_grad=False)
+        x1 = Tensor.randn(B, T, F, requires_grad=False, dtype=np.float64)
+        x2 = Tensor.randn(B, T, F + 1, requires_grad=False, dtype=np.float64)
 
         rnn = RNN(n_neurons=H, return_sequence=False)
         _ = rnn(x1)

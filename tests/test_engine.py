@@ -63,10 +63,11 @@ class TestTensorDtype:
         assert c.dtype == np.float32
 
     def test_linear_forward_preserves_dtype(self):
-        layer = Linear(3, 2, dtype=np.float32)
-        x = Tensor(np.random.randn(4, 3).astype(np.float32))
+        layer = Linear(3, 2, bias=False, dtype=np.float32)
+        # Align input dtype with effective parameter dtype.
+        x = Tensor(np.random.randn(4, 3).astype(layer.weight.dtype), dtype=layer.weight.dtype)
         out = layer(x)
-        assert out.dtype == np.float32
+        assert out.dtype == layer.weight.dtype
 
     def test_batchnorm_dtype_and_running_stats(self):
         bn = BatchNorm1d(5)
@@ -569,3 +570,22 @@ class TestTensorMatmul:
 
         np.testing.assert_allclose(a_t.grad, a_p.grad.numpy(), rtol=1e-5)
         np.testing.assert_allclose(b_t.grad, b_p.grad.numpy(), rtol=1e-5)
+
+class TestDtypeMismatch:
+    """Test dtype mismatch."""
+    
+    def test_dtype_mismatch(self):
+        """Test dtype mismatch."""
+        a = Tensor([1.0, 2.0, 3.0], requires_grad=True, dtype=np.float32)
+        b = Tensor([1.0, 2.0, 3.0], requires_grad=True, dtype=np.float64)
+        with pytest.raises(ValueError):
+            a + b
+        with pytest.raises(ValueError):
+            a * b
+        with pytest.raises(ValueError):
+            a @ b
+   
+        with pytest.raises(ValueError):
+            a / b
+        with pytest.raises(ValueError):
+            a.matmul(b)

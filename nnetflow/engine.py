@@ -78,6 +78,14 @@ class Tensor:
         if '_backward' in state:
             del state['_backward']
         return state
+    
+    @classmethod 
+    def _check_dtype(cls,A:'Tensor',B:'Tensor') -> None: 
+        """ Used to check if the dypes of two tensors are compatible for 
+        arithmetic operations""" 
+        if A.dtype != B.dtype: 
+            raise ValueError(f"Tensor dtype mismatch: {A.dtype} != {B.dtype}")
+        return True 
 
     def __setstate__(self, state):
         """Called when unpickling — restores a no-op backward closure."""
@@ -181,6 +189,8 @@ class Tensor:
         Supports adding a Tensor to another Tensor, a scalar, or a NumPy array.
         Broadcasting is handled automatically during the backward pass.
         """
+        if isinstance(other, Tensor): 
+            Tensor._check_dtype(self, other)
         other_val = other.data if isinstance(other, Tensor) else other
         children = (self, other) if isinstance(other, Tensor) else (self,)
         # Preserve dtype from self (or other if both are tensors)
@@ -210,6 +220,8 @@ class Tensor:
         so in the backward pass the incoming gradient is scaled by the *other*
         operand's data.
         """
+        if isinstance(other, Tensor): 
+            Tensor._check_dtype(self, other)
         other_val = other.data if isinstance(other, Tensor) else other
         children = (self, other) if isinstance(other, Tensor) else (self,)
         
@@ -249,6 +261,8 @@ class Tensor:
             d(a/b)/da =  1 / b
             d(a/b)/db = -a / b**2
         """
+        if isinstance(other, Tensor): 
+            Tensor._check_dtype(self, other)
         other_val = other.data if isinstance(other, Tensor) else other
         children = (self, other) if isinstance(other, Tensor) else (self,)
 
@@ -306,6 +320,7 @@ class Tensor:
 
     def __matmul__(self, other: 'Tensor') -> 'Tensor':
             assert isinstance(other, Tensor), "Only support Tensor type for matmul operation"
+            Tensor._check_dtype(self, other)
             can_matmul = Tensor.can_matmul(self.data.shape, other.data.shape) 
             if not can_matmul:
                 raise ValueError(f"Shapes {self.data.shape} and {other.data.shape} not aligned for matmul") 
