@@ -950,6 +950,8 @@ class RNN(Module):
 
             return out
         else:
+            # Final hidden state already carries the full recurrent graph.
+            # No custom backward hook is needed in the non-sequence case.
             return h_t
 
 
