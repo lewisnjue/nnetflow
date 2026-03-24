@@ -964,7 +964,143 @@ class RNN(Module):
     def __str__(self) -> str:
         return self.__repr__()
     
+class LSTM(Module):
+    """Basic (single-layer) LSTM over sequences.
 
+    Expects input of shape ``(batch_size, time_steps, input_size)``.
+
+    This implementation is intentionally minimal and supports:
+    - lazy initialization of weights on first forward pass
+    - optional initial states ``h_t`` and ``c_t``
+    - returning either the final hidden state or the full hidden sequence
+    """
+
+    def __init__(
+        self,
+        return_sequence: bool = False,
+        hidden_size: int = 1,
+        dtype: Optional[npt.DTypeLike] = None,
+    ) -> None:
+        super().__init__()
+        self.dtype = dtype
+        self.is_initialized = False
+        self.return_sequence = return_sequence
+        self.hidden_size = hidden_size
+
+        # Set on first forward pass.
+        self.input_size: Optional[int] = None
+
+    def _init_parameters(self, input_size: int, effective_dtype: npt.DTypeLike) -> None:
+        """Initialize LSTM parameters for a given input feature size."""
+        self.input_size = input_size
+
+        # Use small uniform scaling for stability.
+        limit = np.sqrt(1.0 / max(1, input_size))
+
+        def rand_w(in_dim: int, out_dim: int) -> Tensor:
+            data = (np.random.uniform(-limit, limit, size=(in_dim, out_dim))).astype(effective_dtype)
+            return Tensor(data, requires_grad=True, dtype=effective_dtype)
+
+        def rand_b(out_dim: int) -> Tensor:
+            data = np.zeros((1, out_dim), dtype=effective_dtype)
+            return Tensor(data, requires_grad=True, dtype=effective_dtype)
+
+        # Forget gate parameters
+        self.w_xf = rand_w(input_size, self.hidden_size)
+        self.w_hf = rand_w(self.hidden_size, self.hidden_size)
+        self.b_f = rand_b(self.hidden_size)
+
+        # Input gate parameters
+        self.w_xi = rand_w(input_size, self.hidden_size)
+        self.w_hi = rand_w(self.hidden_size, self.hidden_size)
+        self.b_i = rand_b(self.hidden_size)
+
+        # Output gate parameters
+        self.w_xo = rand_w(input_size, self.hidden_size)
+        self.w_ho = rand_w(self.hidden_size, self.hidden_size)
+        self.b_o = rand_b(self.hidden_size)
+
+        # Cell candidate parameters
+        self.w_xg = rand_w(input_size, self.hidden_size)
+        self.w_hg = rand_w(self.hidden_size, self.hidden_size)
+        self.b_g = rand_b(self.hidden_size)
+
+        self.is_initialized = True
+
+    def forward(
+        self,
+        x: Tensor,
+        c_t: Optional[Tensor] = None,
+        h_t: Optional[Tensor] = None,
+    ) -> tuple[Tensor, Tensor]:
+        """
+        Args:
+            x: (B, T, input_size)
+            c_t: Optional initial cell state, (B, hidden_size)
+            h_t: Optional initial hidden state, (B, hidden_size)
+
+        Returns:
+            - If ``return_sequence=False``: (h_T, c_T)
+            - If ``return_sequence=True``: (H_seq, c_T)
+        """
+        assert len(x.shape) == 3, f"Expected input to be 3D, got shape {x.shape}"
+        batch_size, time_steps, input_size = x.shape
+
+        effective_dtype: npt.DTypeLike = x.data.dtype if self.dtype is None else self.dtype
+        if self.dtype is not None and x.data.dtype != np.dtype(self.dtype):
+            raise ValueError(f"LSTM dtype mismatch: x dtype {x.data.dtype} != layer dtype {np.dtype(self.dtype)}")
+        if not self.is_initialized:
+            self._init_parameters(input_size, effective_dtype=effective_dtype)
+        else:
+            assert (
+                input_size == self.input_size
+            ), f"LSTM expected input feature size {self.input_size}, got {input_size}"
+
+        if c_t is not None:
+            assert c_t.shape == (batch_size, self.hidden_size), "c_t shape must be (batch_size,hidden_size)"
+            if c_t.dtype != np.dtype(effective_dtype):
+                raise ValueError(f"c_t dtype mismatch: {c_t.dtype} != {np.dtype(effective_dtype)}")
+        if h_t is not None:
+            assert h_t.shape == (batch_size, self.hidden_size), "h_t shape must be (batch_size,hidden_size)"
+            if h_t.dtype != np.dtype(effective_dtype):
+                raise ValueError(f"h_t dtype mismatch: {h_t.dtype} != {np.dtype(effective_dtype)}")
+
+        if h_t is None:
+            h_t = Tensor.zeros(batch_size, self.hidden_size, requires_grad=False, dtype=effective_dtype)
+        if c_t is None:
+            c_t = Tensor.zeros(batch_size, self.hidden_size, requires_grad=False, dtype=effective_dtype)
+
+        outputs: List[Tensor] = []
+
+        for t in range(time_steps):
+            x_t = x[:, t, :]  # (B, input_size)
+
+            # Gate computations
+            f_t = (x_t @ self.w_xf + h_t @ self.w_hf + self.b_f).sigmoid()
+            i_t = (x_t @ self.w_xi + h_t @ self.w_hi + self.b_i).sigmoid()
+            o_t = (x_t @ self.w_xo + h_t @ self.w_ho + self.b_o).sigmoid()
+            g_t = (x_t @ self.w_xg + h_t @ self.w_hg + self.b_g).tanh()
+
+            c_t = f_t * c_t + i_t * g_t
+            h_t = o_t * c_t.tanh()
+
+            if self.return_sequence:
+                outputs.append(h_t)
+
+        if self.return_sequence:
+            out_data = np.stack([h.data for h in outputs], axis=1)
+            h_seq = Tensor(out_data, _children=tuple(outputs), _op="LSTMSequence")
+            if h_seq.requires_grad:
+                def _backward() -> None:
+                    grad_out = h_seq.grad  # (B, T, H)
+                    for t, h in enumerate(outputs):
+                        if h.requires_grad:
+                            h.grad += grad_out[:, t, :]
+
+                h_seq._backward = _backward
+            return h_seq, c_t
+
+        return h_t, c_t
 
 class MultiHeadAttention(Module):
     """Multi-Head Attention (Vaswani et al., 2017).
