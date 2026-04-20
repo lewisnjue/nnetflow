@@ -42,18 +42,19 @@ class Tensor:
         """
         if dtype is not None:
             target_dtype = np.dtype(dtype)
-        elif hasattr(data, 'dtype'):  
+        elif hasattr(data, 'dtype'):
             target_dtype = data.dtype
         else:
             target_dtype = np.float64
 
-        if hasattr(data, 'dtype'):  
+        if hasattr(data, 'dtype'):
             self.data = data.astype(target_dtype, copy=False)
         else:
             try:
                 self.data = np.array(data, dtype=target_dtype)
             except Exception as e:
-                raise TypeError(f"Could not convert data to Tensor. Error: {e}")
+                raise TypeError(f"Could not convert data to Tensor. Error:\
+                {e}")
 
         self._op = _op
 
@@ -78,14 +79,14 @@ class Tensor:
         if '_backward' in state:
             del state['_backward']
         return state
-    
-    @classmethod 
+
+    @classmethod
     def _check_dtype(cls,A:'Tensor',B:'Tensor') -> None: 
-        """ Used to check if the dypes of two tensors are compatible for 
-        arithmetic operations""" 
-        if A.dtype != B.dtype: 
+        """ Used to check if the dypes of two tensors are compatible for
+        arithmetic operations"""
+        if A.dtype != B.dtype:
             raise ValueError(f"Tensor dtype mismatch: {A.dtype} != {B.dtype}")
-        return True 
+        return True
 
     def __setstate__(self, state):
         """Called when unpickling — restores a no-op backward closure."""
@@ -95,7 +96,8 @@ class Tensor:
     @property
     def dtype(self):
         """dtype property"""
-        return self.data.dtype 
+        return self.data.dtype
+
     def to(self, dtype: npt.DTypeLike) -> 'Tensor':
         """Cast the tensor to a new dtype, returning a **detached** copy.
 
@@ -856,43 +858,40 @@ class Tensor:
                 grad_slice = np.zeros_like(self.data)
                 grad_slice[slices] = out.grad
                 self.grad += grad_slice
-        
         if out.requires_grad:
             out._backward = _backward
         return out
 
     # --- Backward Pass ---
-    
     def backward(self) -> None:
         """
         Performs backpropagation starting from this tensor.
         Assumes this tensor is the final output (e.g., a scalar loss).
         """
         if not self.requires_grad:
-            raise RuntimeError("Cannot call backward on tensor that does not require_grad")
-        
+            raise RuntimeError("Cannot call backward on tensor that does not \
+            require_grad")
         # Build topological sort
         topo = []
         visited = set()
+
         def build_topo(v: 'Tensor'):
+
             if v not in visited and v.requires_grad:
                 visited.add(v)
                 for child in v._prev:
                     build_topo(child)
                 topo.append(v)
-        
         build_topo(self)
-        
         # --- Initialize Gradients ---
         # 1. Set the seed gradient for the output tensor to 1
         self.grad = np.ones_like(self.data)
-        
         # 2. Ensure all other tensors in the graph have zeroed gradients
         #    (This is technically optional if zero_grad() is used, but safer)
         for node in topo:
             if node is not self and node.grad is not None:
                 node.grad.fill(0.0)
-            elif node.grad is None and node.requires_grad: # Should not happen, but safeguard
+            elif node.grad is None and node.requires_grad:
                 node.grad = np.zeros_like(node.data)
 
         # --- Propagate Gradients ---
