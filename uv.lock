@@ -1302,6 +1302,9 @@ dev = [
     { name = "ipython", version = "8.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
     { name = "ipython", version = "8.39.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
     { name = "ipython", version = "9.15.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pytest", version = "8.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
+    { name = "pytest", version = "8.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
+    { name = "pytest", version = "9.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
 ]
 
 [package.metadata]
@@ -1318,7 +1321,10 @@ requires-dist = [
 provides-extras = ["test", "typecheck"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "ipython", specifier = ">=8.12.3" }]
+dev = [
+    { name = "ipython", specifier = ">=8.12.3" },
+    { name = "pytest", specifier = ">=8.3.5" },
+]
 
 [[package]]
 name = "numpy"
