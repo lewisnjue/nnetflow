@@ -128,15 +128,30 @@ class Tensor:
         Returns:
             The unbroadcasted gradient.
         """
-        while len(grad.shape) > len(shape):
-            grad = grad.sum(axis=0)  
-        for i, (grad_dim, shape_dim) in enumerate(zip(grad.shape, shape)):
-            if grad_dim != shape_dim:
-                if shape_dim == 1:
-                    grad = grad.sum(axis=i, keepdims=True)
-                else:
-                    raise ValueError(f"Cannot unbroadcast shape {grad.shape} to {shape}")
-        return grad
+        # Fast unbroadcast: compute all axes that need summing and do one reduction.
+        grad = np.asarray(grad)
+        if grad.shape == shape:
+            return grad
+
+        axes = []
+        ndim_diff = grad.ndim - len(shape)
+        # Sum any leading dimensions introduced by broadcasting
+        if ndim_diff > 0:
+            axes.extend(range(0, ndim_diff))
+
+        # For remaining dimensions, sum where target shape is 1
+        for i, s in enumerate(shape):
+            if s == 1:
+                axes.append(ndim_diff + i)
+
+        if axes:
+            grad = grad.sum(axis=tuple(axes), keepdims=True)
+
+        # Finally reshape to target shape (numpy will broadcast/squeeze as needed)
+        try:
+            return grad.reshape(shape)
+        except Exception:
+            raise ValueError(f"Cannot unbroadcast shape {grad.shape} to {shape}")
 
     def __repr__(self) -> str:
         """Return a human-readable string representation of the Tensor."""
@@ -201,9 +216,9 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                self.grad += Tensor.unbroadcast(out.grad, self.data.shape)
+                np.add(self.grad, Tensor.unbroadcast(out.grad, self.data.shape), out=self.grad)
             if isinstance(other, Tensor) and other.requires_grad:
-                other.grad += Tensor.unbroadcast(out.grad, other.data.shape)
+                np.add(other.grad, Tensor.unbroadcast(out.grad, other.data.shape), out=other.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -231,9 +246,9 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                self.grad += Tensor.unbroadcast((other_val * out.grad), self.data.shape)
+                np.add(self.grad, Tensor.unbroadcast(other_val * out.grad, self.data.shape), out=self.grad)
             if isinstance(other, Tensor) and other.requires_grad:
-                other.grad += Tensor.unbroadcast((self.data * out.grad), other.data.shape)
+                np.add(other.grad, Tensor.unbroadcast(self.data * out.grad, other.data.shape), out=other.grad)
                 
         if out.requires_grad:
             out._backward = _backward
@@ -250,7 +265,7 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                self.grad += (other * (self.data ** (other - 1))) * out.grad
+                np.add(self.grad, (other * (self.data ** (other - 1))) * out.grad, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -272,9 +287,9 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                self.grad += Tensor.unbroadcast((1 / other_val) * out.grad, self.data.shape)
+                np.add(self.grad, Tensor.unbroadcast((1 / other_val) * out.grad, self.data.shape), out=self.grad)
             if isinstance(other, Tensor) and other.requires_grad:
-                other.grad += Tensor.unbroadcast((-self.data / (other_val ** 2)) * out.grad, other.data.shape)
+                np.add(other.grad, Tensor.unbroadcast((-self.data / (other_val ** 2)) * out.grad, other.data.shape), out=other.grad)
                 
         if out.requires_grad:
             out._backward = _backward
@@ -346,7 +361,7 @@ class Tensor:
                         else:
                             self_grad_contrib = np.outer(out.grad, other.data)
 
-                    self.grad += Tensor.unbroadcast(self_grad_contrib, self.data.shape)
+                    np.add(self.grad, Tensor.unbroadcast(self_grad_contrib, self.data.shape), out=self.grad)
 
                if other.requires_grad:
                     # CASE A: 'self' is a Matrix (2D+)
@@ -365,7 +380,7 @@ class Tensor:
                             # requiring the outer product of self and grad.
                             other_grad_contrib = np.outer(self.data, out.grad)
 
-                    other.grad += Tensor.unbroadcast(other_grad_contrib, other.data.shape)
+                    np.add(other.grad, Tensor.unbroadcast(other_grad_contrib, other.data.shape), out=other.grad)
 
             if out.requires_grad:
                 out._backward = _backward
@@ -377,16 +392,12 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                if axis is None: # in this case only one number is in the out `Tensor`
-                    grad_expanded = np.ones_like(self.data) * out.grad
+                if axis is None:  # scalar result
+                    grad_to_expand = out.grad
                 else:
-                    if keepdims:
-                        grad_to_expand = out.grad 
-                    else:
-                        grad_to_expand = np.expand_dims(out.grad, axis=axis)
-                    grad_expanded = np.ones_like(self.data) * grad_to_expand
-                
-                self.grad += grad_expanded
+                    grad_to_expand = out.grad if keepdims else np.expand_dims(out.grad, axis=axis)
+                # Add into self.grad with broadcasting to avoid temporaries
+                np.add(self.grad, grad_to_expand, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -413,7 +424,7 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                self.grad += out.data * out.grad
+                np.add(self.grad, out.data * out.grad, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -429,7 +440,7 @@ class Tensor:
         def _backward():
             if self.requires_grad:
                 # Add epsilon for numerical stability in gradient
-                self.grad += (1 / (self.data + 1e-8)) * out.grad 
+                np.add(self.grad, (1 / (self.data + 1e-8)) * out.grad, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -442,7 +453,7 @@ class Tensor:
         def _backward():
             if self.requires_grad:
                 # d/dx(sqrt(x)) = 1 / (2 * sqrt(x))
-                self.grad += (0.5 / (np.sqrt(self.data) + 1e-8)) * out.grad
+                np.add(self.grad, (0.5 / (np.sqrt(self.data) + 1e-8)) * out.grad, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -457,7 +468,7 @@ class Tensor:
         def _backward():
             if self.requires_grad:
                 mask = (self.data >= min_val) & (self.data <= max_val)
-                self.grad += out.grad * mask
+                np.add(self.grad, out.grad * mask, out=self.grad)
 
         if out.requires_grad:
             out._backward = _backward
@@ -475,7 +486,7 @@ class Tensor:
             if self.requires_grad:
                 # Add epsilon for numerical stability in gradient
                 # np.log(10) is a constant, so it's fine to use numpy
-                self.grad += (1 / ((self.data + 1e-8) * np.log(10))) * out.grad
+                np.add(self.grad, (1 / ((self.data + 1e-8) * np.log(10))) * out.grad, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -491,7 +502,7 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                self.grad += (self.data > 0) * out.grad
+                np.add(self.grad, (self.data > 0) * out.grad, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -506,7 +517,7 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                self.grad += np.where(self.data > 0, 1, alpha) * out.grad
+                np.add(self.grad, np.where(self.data > 0, 1, alpha) * out.grad, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -522,7 +533,7 @@ class Tensor:
         def _backward():
             if self.requires_grad:
                 # d/dx(alpha * (exp(x) - 1)) = alpha * exp(x)
-                self.grad += np.where(self.data > 0, 1, alpha * np.exp(self.data)) * out.grad
+                np.add(self.grad, np.where(self.data > 0, 1, alpha * np.exp(self.data)) * out.grad, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -537,7 +548,7 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                self.grad += scale * np.where(self.data > 0, 1, alpha * np.exp(self.data)) * out.grad
+                np.add(self.grad, scale * np.where(self.data > 0, 1, alpha * np.exp(self.data)) * out.grad, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -563,7 +574,7 @@ class Tensor:
                 pdf_np = (1 / sqrt_2pi) * np.exp(-0.5 * data_np ** 2)
                 cdf = cdf_np
                 pdf = pdf_np
-                self.grad += (cdf + self.data * pdf) * out.grad
+                np.add(self.grad, (cdf + self.data * pdf) * out.grad, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -583,7 +594,7 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                self.grad += sig * (1 - sig) * out.grad
+                np.add(self.grad, sig * (1 - sig) * out.grad, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -608,7 +619,7 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                self.grad += (1 - t ** 2) * out.grad
+                np.add(self.grad, (1 - t ** 2) * out.grad, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -638,7 +649,7 @@ class Tensor:
                 sum_gy = (g * y).sum(axis=axis, keepdims=True)
                 grad_contrib = y * (g - sum_gy)
                 
-                self.grad += grad_contrib
+                np.add(self.grad, grad_contrib, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -661,7 +672,7 @@ class Tensor:
                 g = out.grad
                 sm = np.exp(out.data) # = softmax(x)
                 grad_contrib = g - sm * g.sum(axis=axis, keepdims=True)
-                self.grad += grad_contrib
+                np.add(self.grad, grad_contrib, out=self.grad)
                 
         if out.requires_grad:
             out._backward = _backward
@@ -687,7 +698,7 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                self.grad += out.grad.reshape(self.data.shape)
+                np.add(self.grad, out.grad.reshape(self.data.shape), out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -763,7 +774,7 @@ class Tensor:
                 grad_for_self = np.where(mask.data, 0.0, out.grad)
                 
                 # Add the gradient to the parent.
-                self.grad += grad_for_self
+                np.add(self.grad, grad_for_self, out=self.grad)
     
         if self.requires_grad:
             out._backward = _backward
@@ -799,7 +810,7 @@ class Tensor:
                     inverse_axes = None 
                 else:
                     inverse_axes = tuple(np.argsort(axes))
-                self.grad += np.transpose(out.grad, axes=inverse_axes)
+                np.add(self.grad, np.transpose(out.grad, axes=inverse_axes), out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -857,7 +868,7 @@ class Tensor:
                 # into the locations specified by the slice
                 grad_slice = np.zeros_like(self.data)
                 grad_slice[slices] = out.grad
-                self.grad += grad_slice
+                np.add(self.grad, grad_slice, out=self.grad)
         if out.requires_grad:
             out._backward = _backward
         return out
