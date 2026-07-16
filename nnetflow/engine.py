@@ -7,7 +7,7 @@ import scipy.special as sp
 
 
 class Tensor:
-    """A simple autograd Tensor class supporting dynamic computation graphs
+    r"""A simple autograd Tensor class supporting dynamic computation graphs
     and backpropagation.
 
     This is the core data structure of nnetflow.  Every arithmetic operation
@@ -24,6 +24,7 @@ class Tensor:
         _op: str = '',
         requires_grad: Optional[bool] = None,
         dtype: Optional[npt.DTypeLike] = None,
+        copy: bool = False
     ) -> None:
         """Create a new Tensor.
 
@@ -32,23 +33,25 @@ class Tensor:
             _children: Tensors that were used to produce this tensor (used
                 internally by operations to build the computation graph).
             _op: A short label for the operation that created this tensor
-                (e.g. ``'+'``, ``'@'``).  Used only for debugging/display.
+                (e.g. ``'+'``, ``'@'``).  Used only for debugging/display/visualization.
             requires_grad: Whether to track gradients for this tensor.  If
                 ``None``, gradient tracking is enabled automatically when
                 any parent tensor requires gradients.
             dtype: Data type of the tensor (e.g. ``np.float32``).  If
                 ``None``, the dtype is inferred from *data* (or defaults
                 to ``np.float64`` for plain Python scalars/lists).
+            copy: if `True`, and you used numpy array as input, the data will 
+                be copied to avoid unexpected changes in the original array.
         """
         if dtype is not None:
             target_dtype = np.dtype(dtype)
         elif hasattr(data, 'dtype'):
             target_dtype = data.dtype
         else:
-            target_dtype = np.float64
+            target_dtype = np.float64 # :( , i will fix later
 
         if hasattr(data, 'dtype'):
-            self.data = data.astype(target_dtype, copy=False)
+            self.data = data.astype(target_dtype, copy=copy)
         else:
             try:
                 self.data = np.array(data, dtype=target_dtype)
@@ -67,7 +70,7 @@ class Tensor:
 
         if self.requires_grad:
             grad_dtype = np.float64 if self.data.dtype not in [np.float64, np.float32] else self.data.dtype
-            self.grad: Optional[Any] = np.zeros(self.data.shape, dtype=grad_dtype)
+            self.grad: Optional[Any] =  np.zeros_like(self.data, dtype=grad_dtype)
         else:
             self.grad: Optional[Any] = None
 
@@ -75,26 +78,33 @@ class Tensor:
 
     def __getstate__(self):
         """Called when pickling — removes the backward closure which cannot be serialized."""
+        """
         state = self.__dict__.copy()
         if '_backward' in state:
             del state['_backward']
         return state
+        """
+        return (self.data,self._op,self._prev,self.requires_grad,self.grad)
 
     @classmethod
-    def _check_dtype(cls,A:'Tensor',B:'Tensor') -> None: 
+    def _check_dtype(cls,A:'Tensor',B:'Tensor') -> bool: 
         """ Used to check if the dypes of two tensors are compatible for
         arithmetic operations"""
         if A.dtype != B.dtype:
             raise ValueError(f"Tensor dtype mismatch: {A.dtype} != {B.dtype}")
         return True
 
-    def __setstate__(self, state):
+    def __setstate__(self, state) -> None:
         """Called when unpickling — restores a no-op backward closure."""
+        """
         self.__dict__.update(state)
+        self._backward = lambda: None
+        """
+        self.data,self._op,self._prev,self.requires_grad,self.grad = state
         self._backward = lambda: None
 
     @property
-    def dtype(self):
+    def dtype(self) -> npt.DTypeLike:
         """dtype property"""
         return self.data.dtype
 
@@ -112,7 +122,7 @@ class Tensor:
             A new ``Tensor`` with the specified dtype.
         """
         new_data = self.data.astype(dtype)  # creates a copy
-        return Tensor(new_data, requires_grad=self.requires_grad)
+        return Tensor(new_data, requires_grad=False)
 
     def astype(self, dtype: npt.DTypeLike) -> 'Tensor':
         """Alias for :meth:`to`.  Returns a new tensor with the given dtype."""
@@ -313,27 +323,24 @@ class Tensor:
     def __rtruediv__(self, other: Union[float, int, np.ndarray]) -> 'Tensor':
         return other * (self ** -1)
 
+
     @classmethod 
-    def can_matmul(cls,shape_a, shape_b):
-        """ used to check if two shapes can be matrix multiplied together"""
-        ndim_a, ndim_b = len(shape_a), len(shape_b)
-        if ndim_a == 0 or ndim_b == 0:
+    def can_matmul(cls, shape_a, shape_b):
+        """Check if two shapes can be matrix multiplied together."""
+        if not shape_a or not shape_b:
             return False 
-        dim_inner_a = shape_a[-1]
-        dim_inner_b = shape_b[-2] if ndim_b > 1 else shape_b[0]
-        
-        if dim_inner_a != dim_inner_b:
+
+        # Inner matrix dimensions must match (A's last dim vs B's second-to-last dim)
+        inner_b = shape_b[-2] if len(shape_b) > 1 else shape_b[-1]
+        if shape_a[-1] != inner_b:
             return False
-        batch_shape_a = shape_a[:-1] if ndim_a == 1 else shape_a[:-2]
-        batch_shape_b = shape_b[:-1] if ndim_b == 1 else shape_b[:-2]
+
         try:
-            # Use numpy for shape checking (doesn't need device)
-            np.broadcast_shapes(batch_shape_a, batch_shape_b)
+            np.broadcast_shapes(shape_a[:-2], shape_b[:-2])
             return True
         except ValueError:
             return False
-
-
+# .....
 
     def __matmul__(self, other: 'Tensor') -> 'Tensor':
             assert isinstance(other, Tensor), "Only support Tensor type for matmul operation"
