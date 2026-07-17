@@ -1240,6 +1240,12 @@ class MultiHeadAttention(Module):
             out = self.out_proj(context)
             return out
     
+    def reset_cache(self) -> None:
+        """Reset the cached keys and values for autoregressive decoding."""
+        self.cache_k = None
+        self.cache_v = None
+        self.ptr_current_pos = 0
+    
     def __repr__(self) -> str:
         return (
             f"MultiHeadAttention(d_in={self.d_in}, d_out={self.d_out}, "
