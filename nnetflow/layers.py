@@ -1166,64 +1166,79 @@ class MultiHeadAttention(Module):
         if causal and max_seq_len is not None:
             mask = np.triu(np.ones((max_seq_len, max_seq_len), dtype=np.float32), k=1)
             self._causal_mask = Tensor(mask, requires_grad=False)
+        self.ptr_current_pos = 0
+        self.cache_k: Optional[Tensor] = None
+        self.cache_v: Optional[Tensor] = None
     
-    def _get_causal_mask(self, seq_len: int) -> Optional[Tensor]:
-        """
-        Get or create causal mask for the given sequence length.
-        
-        Args:
-            seq_len: Current sequence length
-        
-        Returns:
-            Causal mask tensor of shape (seq_len, seq_len) or None if not causal
-        """
-        if not self.causal:
-            return None
-        
-        if self._causal_mask is not None and seq_len <= self._causal_mask.shape[0]:
-            mask_slice = self._causal_mask[:seq_len, :seq_len]
-            return mask_slice.bool()
-        
-        mask = np.triu(np.ones((seq_len, seq_len), dtype=np.float32), k=1)
-        mask_tensor = Tensor(mask, requires_grad=False)
-        return mask_tensor.bool()
-    
-    def forward(self, x: Tensor) -> Tensor:
-        """
-        Forward pass of Multi-Head Attention.
-        
-        Args:
-            x: Input tensor of shape (batch_size, seq_len, d_in)
-        
-        Returns:
-            Output tensor of shape (batch_size, seq_len, d_out)
-        """
-        B, T, _ = x.shape
-        Q = self.W_query(x)
-        K = self.W_key(x)
-        V = self.W_value(x)
-        
-        Q = Q.reshape(B, T, self.num_heads, self.head_dim).transpose((0, 2, 1, 3))
-        K = K.reshape(B, T, self.num_heads, self.head_dim).transpose((0, 2, 1, 3))
-        V = V.reshape(B, T, self.num_heads, self.head_dim).transpose((0, 2, 1, 3))
-        
-        attn_scores = (Q @ K.transpose((0, 1, 3, 2))) * self.scale
-        
-        if self.causal:
-            causal_mask = self._get_causal_mask(T)
-            if causal_mask is not None:
-                mask_broadcast = causal_mask.data[None, None, :, :]
-                attn_scores = attn_scores.masked_fill(
-                    Tensor(mask_broadcast, requires_grad=False), 
-                    float('-inf')
-                )
-        
-        attn_weights = attn_scores.softmax(axis=-1)
-        attn_weights = self.dropout_layer(attn_weights)
-        context = attn_weights @ V
-        context = context.transpose((0, 2, 1, 3)).reshape(B, T, self.d_out)
-        out = self.out_proj(context)
-        return out
+    def forward(self, x: Tensor, use_cache: bool = False) -> Tensor:
+            """
+            Forward pass of Multi-Head Attention.
+            
+            Args:
+                x: Input tensor of shape (batch_size, seq_len, d_in)
+                use_cache: Whether to use cached values (default: False)
+            
+            Returns:
+                Output tensor of shape (batch_size, seq_len, d_out)
+            """
+            B, T, _ = x.shape
+            Q = self.W_query(x)
+            K = self.W_key(x)
+            V = self.W_value(x)
+
+            Q = Q.reshape(B, T, self.num_heads, self.head_dim)
+            K = K.reshape(B, T, self.num_heads, self.head_dim)
+            V = V.reshape(B, T, self.num_heads, self.head_dim)
+
+            if use_cache:
+                if self.cache_k is None or self.cache_v is None:
+                    self.cache_k = K
+                    self.cache_v = V
+                else:
+                    self.cache_k = Tensor.concatenate([self.cache_k, K], axis=1)
+                    self.cache_v = Tensor.concatenate([self.cache_v, V], axis=1)
+                K = self.cache_k
+                V = self.cache_v
+            else:
+                # Reset the pointer if we aren't using cache
+                self.ptr_current_pos = 0
+
+            # Calculate the total key sequence length (important for the mask shape)
+            T_k = K.shape[1]
+            
+            Q = Q.transpose((0, 2, 1, 3))
+            K = K.transpose((0, 2, 1, 3)) 
+            V = V.transpose((0, 2, 1, 3))  
+            
+            attn_scores = (Q @ K.transpose((0, 1, 3, 2))) * self.scale
+
+            mask = None
+            if self.causal and self._causal_mask is not None:
+                if use_cache:
+                    # Queries correspond to: ptr_current_pos -> ptr_current_pos + T
+                    # Keys correspond to: 0 -> ptr_current_pos + T
+                    mask = self._causal_mask.bool()[ 
+                        self.ptr_current_pos : self.ptr_current_pos + T,
+                        : self.ptr_current_pos + T 
+                    ]
+                    self.ptr_current_pos += T
+                else:
+                    mask = self._causal_mask.bool()[:T, :T]
+                    self.ptr_current_pos = T # Advance pointer in case cache is used next pass
+            
+            if mask is not None:
+                # Broadcast mask from (T, T_k) to match attn_scores (B, num_heads, T, T_k)
+                mask_broadcast = mask.reshape(1, 1, T, T_k)
+                attn_scores = attn_scores.masked_fill(mask_broadcast, float('-inf'))
+                
+            attn_weights = attn_scores.softmax(axis=-1)
+            attn_weights = self.dropout_layer(attn_weights)
+            
+            context = attn_weights @ V
+            context = context.transpose((0, 2, 1, 3)).reshape(B, T, self.d_out)
+            
+            out = self.out_proj(context)
+            return out
     
     def __repr__(self) -> str:
         return (
