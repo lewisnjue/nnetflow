@@ -1,55 +1,76 @@
 import numpy as np 
 from nnetflow.engine import Tensor 
 from typing import Union, List, Tuple, Optional, Dict, Any
-from nnetflow.init import initializers
 from nnetflow.module import Module
 import numpy.typing as npt
 
 class Linear(Module):
-    """Fully-connected (dense) layer: ``output = input @ weight + bias``.
+    """Fully-connected (dense) layer: ``output = input @ weight + bias``."""
 
-    Weights are initialized with He uniform initialization by default.
-    """
-
-    def __init__(self, in_features: int, out_features: int, bias: bool = True, dtype: Optional[npt.DTypeLike] = None) -> None:
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        bias: bool = True,
+        dtype: Optional[npt.DTypeLike] = None,
+    ) -> None:
         """Create a Linear layer.
 
         Args:
-            in_features: Number of input features (last dimension of input).
+            in_features: Number of input features.
             out_features: Number of output features (neurons).
             bias: If ``True``, a learnable bias vector is added.
-            dtype: Data type for parameters (e.g. ``np.float32``).
+            dtype: Data type for parameters (e.g. ``np.float32``). Defaults
+                to ``np.float64`` so the layer will naturally reject input
+                tensors with a different dtype unless you pass an explicit
+                dtype to match the data.
         """
-        self.in_features = in_features 
-        self.out_features = out_features 
-        _weight = np.random.randn(in_features, out_features) 
-        _bias = np.zeros((1, out_features)) 
-        self.weight = Tensor(_weight, requires_grad=True,dtype=dtype)
-        initializers.He_uniform(self.weight, nonlinearity='relu') 
-        self.has_bias = bias
-        if bias:
-            self.bias = Tensor(_bias, requires_grad=True,dtype=dtype)
-    
+        super().__init__()
+
+        self.in_features = in_features
+        self.out_features = out_features
+        self.dtype = dtype if dtype is not None else np.float64
+
+        self.weight = Tensor(
+            np.random.randn(in_features, out_features),
+            requires_grad=True,
+            dtype=self.dtype,
+        )
+        self.has_bias = bool(bias)
+        if self.has_bias:
+            _bias = np.zeros((1, out_features))
+            self.bias = Tensor(_bias, requires_grad=True, dtype=self.dtype)
+
     def forward(self, x: Tensor) -> Tensor:
         """Compute ``x @ weight + bias``.
 
         Args:
-            x: Input tensor of shape ``(batch_size, in_features)``.
+            x: Input tensor of shape ``(..., in_features)``.
 
         Returns:
-            Output tensor of shape ``(batch_size, out_features)``.
+            Output tensor of shape ``(..., out_features)``.
         """
-        assert x.shape[-1] == self.in_features, f"Input feature size mismatch, expected {self.in_features}, got {x.shape[-1]}"
+        assert x.shape[-1] == self.in_features, (
+            f"Input feature size mismatch, expected {self.in_features}, got {x.shape[-1]}"
+        )
+        if x.dtype != self.weight.dtype:
+            raise ValueError(
+                f"Tensor dtype mismatch: input dtype {x.dtype} != layer dtype {self.weight.dtype}"
+            )
         if self.has_bias:
-             return x @ self.weight + self.bias 
+            return x @ self.weight + self.bias
         else:
-            return x @ self.weight 
+            return x @ self.weight
 
     def __repr__(self) -> str:
-        return f"Linear(in_features={self.in_features}, out_features={self.out_features})"
+        return (
+            f"Linear(in_features={self.in_features}, "
+            f"out_features={self.out_features}, bias={self.has_bias})"
+        )
 
     def __str__(self) -> str:
         return self.__repr__()
+
 
 class Conv2d(Module):
     """2D convolution layer.
