@@ -5,7 +5,7 @@ from typing import Any, Union, Tuple, Optional, Set
 
 import scipy.special as sp
 
-
+epsilon = 1e-8 # i will store this to config
 class Tensor:
     r"""A simple autograd Tensor class supporting dynamic computation graphs
     and backpropagation.
@@ -19,7 +19,7 @@ class Tensor:
 
     def __init__(
         self,
-        data: Union[np.ndarray, float, int, list, tuple],
+        data : npt.ArrayLike = None,
         _children: Tuple['Tensor', ...] = (),
         _op: str = '',
         requires_grad: Optional[bool] = None,
@@ -43,12 +43,16 @@ class Tensor:
             copy: if `True`, and you used numpy array as input, the data will 
                 be copied to avoid unexpected changes in the original array.
         """
+        if isinstance(data, Tensor):
+            if requires_grad is None:
+                requires_grad = data.requires_grad
+            data = data.data
         if dtype is not None:
             target_dtype = np.dtype(dtype)
         elif hasattr(data, 'dtype'):
             target_dtype = data.dtype
         else:
-            target_dtype = np.float64 # :( , i will fix later
+            target_dtype = np.float64
 
         if hasattr(data, 'dtype'):
             self.data = data.astype(target_dtype, copy=copy)
@@ -68,7 +72,7 @@ class Tensor:
         else:
             self.requires_grad = bool(requires_grad)
 
-        if self.requires_grad:
+        if self.requires_grad: # ?? bug 
             grad_dtype = np.float64 if self.data.dtype not in [np.float64, np.float32] else self.data.dtype
             self.grad: Optional[Any] =  np.zeros_like(self.data, dtype=grad_dtype)
         else:
@@ -77,14 +81,14 @@ class Tensor:
         self._backward = lambda: None
 
     def __getstate__(self):
-        """Called when pickling — removes the backward closure which cannot be serialized."""
+        """Called when pickling — removes the backward closure which cannot be serialized.
         """
+        #return (self.data,self._op,self._prev,self.requires_grad,self.grad)
         state = self.__dict__.copy()
         if '_backward' in state:
             del state['_backward']
         return state
-        """
-        return (self.data,self._op,self._prev,self.requires_grad,self.grad)
+
 
     @classmethod
     def _check_dtype(cls,A:'Tensor',B:'Tensor') -> bool: 
@@ -96,11 +100,7 @@ class Tensor:
 
     def __setstate__(self, state) -> None:
         """Called when unpickling — restores a no-op backward closure."""
-        """
         self.__dict__.update(state)
-        self._backward = lambda: None
-        """
-        self.data,self._op,self._prev,self.requires_grad,self.grad = state
         self._backward = lambda: None
 
     @property
@@ -175,7 +175,7 @@ class Tensor:
 
     def zero_grad(self) -> None:
         """Resets the gradient of this tensor to zero."""
-        if self.requires_grad:
+        if self.requires_grad: ## bug ?? 
             grad_dtype = np.float64 if self.data.dtype not in [np.float64, np.float32] else self.data.dtype
             self.grad = np.zeros_like(self.data, dtype=grad_dtype)
 
@@ -195,6 +195,12 @@ class Tensor:
         """Create a tensor filled with random numbers from a standard normal distribution."""
         data = np.random.randn(*shape).astype(dtype=dtype if dtype else np.float32)
         return cls(data, requires_grad=requires_grad, dtype=dtype)
+    
+    @classmethod
+    def rand(cls, *shape: int, requires_grad: bool = False, dtype: Optional[npt.DTypeLike] = None) -> 'Tensor':
+        """Create a tensor filled with random numbers from a uniform distribution over [0, 1)."""
+        data = np.random.rand(*shape).astype(dtype=dtype if dtype else np.float32)
+        return cls(data, requires_grad=requires_grad, dtype=dtype)
 
     @classmethod
     def zeros_like(cls, tensor: 'Tensor', requires_grad: Optional[bool] = None, dtype: Optional[npt.DTypeLike] = None) -> 'Tensor':
@@ -210,6 +216,7 @@ class Tensor:
             requires_grad = tensor.requires_grad
         return cls(np.ones_like(tensor.data), requires_grad=requires_grad, dtype=dtype)
 
+# --- operations
     def __add__(self, other: Union['Tensor', float, int, np.ndarray]) -> 'Tensor':
         """Element-wise addition (``self + other``).
 
@@ -220,9 +227,7 @@ class Tensor:
             Tensor._check_dtype(self, other)
         other_val = other.data if isinstance(other, Tensor) else other
         children = (self, other) if isinstance(other, Tensor) else (self,)
-        # Preserve dtype from self (or other if both are tensors)
-        dtype = self.data.dtype if not isinstance(other, Tensor) else self.data.dtype
-        out = Tensor(self.data + other_val, children, '+', dtype=dtype) 
+        out = Tensor(self.data + other_val, children, '+') 
         
         def _backward():
             if self.requires_grad:
@@ -340,58 +345,49 @@ class Tensor:
             return True
         except ValueError:
             return False
-# .....
 
     def __matmul__(self, other: 'Tensor') -> 'Tensor':
-            assert isinstance(other, Tensor), "Only support Tensor type for matmul operation"
-            Tensor._check_dtype(self, other)
-            can_matmul = Tensor.can_matmul(self.data.shape, other.data.shape) 
-            if not can_matmul:
-                raise ValueError(f"Shapes {self.data.shape} and {other.data.shape} not aligned for matmul") 
-            # Preserve dtype from inputs (use self's dtype as primary)
-            dtype = self.data.dtype
-            out = Tensor(self.data @ other.data, (self, other), '@', dtype=dtype)
+        assert isinstance(other, Tensor), "Only support Tensor type for matmul operation"
+        Tensor._check_dtype(self, other)
+        
+        can_matmul = Tensor.can_matmul(self.data.shape, other.data.shape) 
+        if not can_matmul:
+            raise ValueError(f"Shapes {self.data.shape} and {other.data.shape} not aligned for matmul") 
+            
+        dtype = self.data.dtype
+        out = Tensor(self.data @ other.data, (self, other), '@', dtype=dtype)
 
-            def _backward():
-               if self.requires_grad:
-                    # CASE A: 'other' is a Matrix (2D+)
-                    if other.data.ndim > 1:
-                        other_transposed = np.swapaxes(other.data, -1, -2)
-                        self_grad_contrib = out.grad @ other_transposed
-                    
-                    # CASE B: 'other' is a Vector (1D)
+        def _backward():
+            if self.requires_grad:
+                if other.data.ndim > 1:
+                    other_transposed = np.swapaxes(other.data, -1, -2)
+                    self_grad_contrib = out.grad @ other_transposed
+                
+                else:
+                    if out.grad.ndim == 0:
+                        self_grad_contrib = out.grad * other.data
                     else:
-                        # If result is scalar (Vector @ Vector), simple scaling
-                        if out.grad.ndim == 0:
-                            self_grad_contrib = out.grad * other.data
-                        # If result is vector (Matrix @ Vector), outer product
-                        else:
-                            self_grad_contrib = np.outer(out.grad, other.data)
+                        self_grad_contrib = np.expand_dims(out.grad, -1) * other.data
 
-                    np.add(self.grad, Tensor.unbroadcast(self_grad_contrib, self.data.shape), out=self.grad)
+                np.add(self.grad, Tensor.unbroadcast(self_grad_contrib, self.data.shape), out=self.grad)
 
-               if other.requires_grad:
-                    # CASE A: 'self' is a Matrix (2D+)
-                    if self.data.ndim > 1:
-                        self_transposed = np.swapaxes(self.data, -1, -2)
-                        other_grad_contrib = self_transposed @ out.grad
-                    
-                    # CASE B: 'self' is a Vector (1D)
+            if other.requires_grad:
+                if self.data.ndim > 1:
+                    self_transposed = np.swapaxes(self.data, -1, -2)
+                    other_grad_contrib = self_transposed @ out.grad
+                
+                else:
+                    if out.grad.ndim == 0:
+                        other_grad_contrib = out.grad * self.data
                     else:
-                        # If result is scalar (Vector @ Vector), simple scaling
-                        if out.grad.ndim == 0:
-                            other_grad_contrib = out.grad * self.data
-                        # If result is vector (Vector @ Matrix), outer product
-                        else:
-                            # Note: This case (Vector @ Matrix) usually results in a vector,
-                            # requiring the outer product of self and grad.
-                            other_grad_contrib = np.outer(self.data, out.grad)
+                        other_grad_contrib = np.expand_dims(self.data, -1) * out.grad
 
-                    np.add(other.grad, Tensor.unbroadcast(other_grad_contrib, other.data.shape), out=other.grad)
+                np.add(other.grad, Tensor.unbroadcast(other_grad_contrib, other.data.shape), out=other.grad)
 
-            if out.requires_grad:
-                out._backward = _backward
-            return out 
+        if out.requires_grad:
+            out._backward = _backward
+            
+        return out
  
     def sum(self, axis: Optional[Union[int, Tuple[int, ...]]] = None, keepdims: bool = False) -> 'Tensor':
         out_data = np.sum(self.data, axis=axis, keepdims=keepdims)
@@ -399,11 +395,10 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                if axis is None:  # scalar result
+                if axis is None: 
                     grad_to_expand = out.grad
                 else:
                     grad_to_expand = out.grad if keepdims else np.expand_dims(out.grad, axis=axis)
-                # Add into self.grad with broadcasting to avoid temporaries
                 np.add(self.grad, grad_to_expand, out=self.grad)
         
         if out.requires_grad:
@@ -416,7 +411,6 @@ class Tensor:
         elif isinstance(axis, int): 
             n = self.data.shape[axis]
         else: 
-            # Use numpy for shape operations (doesn't need device)
             n = np.prod([self.data.shape[i] for i in axis])         
 
         sum_out = self.sum(axis=axis, keepdims=keepdims)
@@ -438,7 +432,6 @@ class Tensor:
         return out
     def log(self) -> 'Tensor':
         """Natural logarithm (ln)."""
-        # Convert to numpy for checking (scalar check)
         if not np.all(np.asarray(self.data) > 0):
             warnings.warn("Log applied to non-positive elements",RuntimeWarning,stacklevel=2)
         
@@ -446,8 +439,7 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                # Add epsilon for numerical stability in gradient
-                np.add(self.grad, (1 / (self.data + 1e-8)) * out.grad, out=self.grad)
+                np.add(self.grad, (1 / (self.data + epsilon)) * out.grad, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -460,7 +452,7 @@ class Tensor:
         def _backward():
             if self.requires_grad:
                 # d/dx(sqrt(x)) = 1 / (2 * sqrt(x))
-                np.add(self.grad, (0.5 / (np.sqrt(self.data) + 1e-8)) * out.grad, out=self.grad)
+                np.add(self.grad, (0.5 / (np.sqrt(self.data) + epsilon)) * out.grad, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -491,9 +483,7 @@ class Tensor:
         
         def _backward():
             if self.requires_grad:
-                # Add epsilon for numerical stability in gradient
-                # np.log(10) is a constant, so it's fine to use numpy
-                np.add(self.grad, (1 / ((self.data + 1e-8) * np.log(10))) * out.grad, out=self.grad)
+                np.add(self.grad, (1 / ((self.data + epsilon) * np.log(10))) * out.grad, out=self.grad)
         
         if out.requires_grad:
             out._backward = _backward
@@ -783,7 +773,7 @@ class Tensor:
                 # Add the gradient to the parent.
                 np.add(self.grad, grad_for_self, out=self.grad)
     
-        if self.requires_grad:
+        if out.requires_grad:
             out._backward = _backward
             
         return out
@@ -874,7 +864,7 @@ class Tensor:
                 # Create a grad array of zeros and "scatter" out.grad
                 # into the locations specified by the slice
                 grad_slice = np.zeros_like(self.data)
-                grad_slice[slices] = out.grad
+                np.add.at(grad_slice, slices, out.grad)
                 np.add(self.grad, grad_slice, out=self.grad)
         if out.requires_grad:
             out._backward = _backward
@@ -901,13 +891,13 @@ class Tensor:
                     build_topo(child)
                 topo.append(v)
         build_topo(self)
-        # --- Initialize Gradients ---
-        # 1. Set the seed gradient for the output tensor to 1
-        self.grad = np.ones_like(self.data)
-        # 2. Ensure all other tensors in the graph have zeroed gradients
-        #    (This is technically optional if zero_grad() is used, but safer)
+        if self._prev:
+            self.grad = np.ones_like(self.grad)
+        else:
+            np.add(self.grad, np.ones_like(self.grad), out=self.grad)
+
         for node in topo:
-            if node is not self and node.grad is not None:
+            if node is not self and node._prev and node.grad is not None:
                 node.grad.fill(0.0)
             elif node.grad is None and node.requires_grad:
                 node.grad = np.zeros_like(node.data)

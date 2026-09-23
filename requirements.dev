@@ -1,9 +1,0 @@
-scikit-learn
-pytest
-pre-commit
-coverage
-tiktoken
-kagglehub
-torch
-pytest-cov
-matplotlib

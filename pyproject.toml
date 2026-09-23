@@ -7,18 +7,16 @@ name = "nnetflow"
 version = "2.0.5"
 description = "A minimal neural network framework with autodiff and NumPy"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
   { name = "Lewis Njue", email = "lewiskinyuanjue.ke@gmail.com" }
 ]
 # Runtime dependencies (engine.gelu and experimental activations require SciPy)
 dependencies = [
-  "cython>=3.2.8",
-  "memory-profiler>=0.61.0",
-  "numpy",
+  "numpy>=2.3",
   "scipy>=1.9",
-  "torch>=2.5.1",
+  "graphviz"
 ]
 
 keywords = [
@@ -72,4 +70,13 @@ markers = [
 dev = [
     "ipython>=8.12.3",
     "pytest>=8.3.5",
+    "torch",
+    "memory-profiler>=0.61.0",
+    "scikit-learn",
+    "pre-commit",
+    "coverage",
+    "tiktoken",
+    "kagglehub",
+    "pytest-cov",
+    "matplotlib"
 ]
