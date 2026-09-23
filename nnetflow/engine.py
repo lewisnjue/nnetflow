@@ -138,31 +138,29 @@ class Tensor:
         Returns:
             The unbroadcasted gradient.
         """
-        # Fast unbroadcast: compute all axes that need summing and do one reduction.
         grad = np.asarray(grad)
         if grad.shape == shape:
             return grad
 
-        axes = []
         ndim_diff = grad.ndim - len(shape)
-        # Sum any leading dimensions introduced by broadcasting
-        if ndim_diff > 0:
-            axes.extend(range(0, ndim_diff))
+        if ndim_diff < 0:
+            raise ValueError(f"Cannot unbroadcast shape {grad.shape} to target shape {shape}")
 
-        # For remaining dimensions, sum where target shape is 1
-        for i, s in enumerate(shape):
-            if s == 1:
-                axes.append(ndim_diff + i)
+        padded_shape = (1,) * ndim_diff + shape
+        axes = []
+
+        for axis, (g_dim, p_dim) in enumerate(zip(grad.shape, padded_shape)):
+            if g_dim == p_dim:
+                continue
+            elif p_dim == 1:
+                axes.append(axis)
+            else:
+                raise ValueError(f"Cannot unbroadcast shape {grad.shape} to target shape {shape}")
 
         if axes:
             grad = grad.sum(axis=tuple(axes), keepdims=True)
 
-        # Finally reshape to target shape (numpy will broadcast/squeeze as needed)
-        try:
-            return grad.reshape(shape)
-        except Exception:
-            raise ValueError(f"Cannot unbroadcast shape {grad.shape} to {shape}")
-
+        return grad.reshape(shape)
     def __repr__(self) -> str:
         """Return a human-readable string representation of the Tensor."""
         # Convert to numpy for display purposes
