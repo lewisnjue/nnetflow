@@ -71,7 +71,6 @@ class Linear(Module):
     def __str__(self) -> str:
         return self.__repr__()
 
-
 class Conv2d(Module):
     """2D convolution layer.
 
@@ -93,24 +92,22 @@ class Conv2d(Module):
             bias: If ``True``, adds a learnable bias term.
             dtype: Data type for parameters.
         """
+        super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
         self.has_bias = bias
-        self.dtype = dtype
+        self.dtype = dtype if dtype is not None else np.float64
 
         _weight = np.random.randn(
-            out_channels, in_channels, kernel_size, kernel_size) 
-        
-        self.weight = Tensor(_weight, requires_grad=True,dtype=dtype)
-        initializers.He_normal(self.weight, nonlinearity='relu')
+            out_channels, in_channels, kernel_size, kernel_size)
 
+        self.weight = Tensor(_weight, requires_grad=True, dtype=self.dtype)
         if self.has_bias:
-
             _bias = np.zeros((1, out_channels))
-            self.bias = Tensor(_bias, requires_grad=True,dtype=dtype)
+            self.bias = Tensor(_bias, requires_grad=True, dtype=self.dtype)
         else:
             self.bias = None
 
@@ -131,6 +128,33 @@ class Conv2d(Module):
             shape=(B, C_in, H_out, W_out, K, K),
             strides=(B_stride, C_stride, H_stride * S, W_stride * S, H_stride, W_stride)
         )
+
+    @staticmethod
+    def _col2im_accumulate(grad_patches: np.ndarray, x_padded_shape: Tuple[int, int, int, int], K: int, S: int) -> np.ndarray:
+        """
+        Scatter-add grad_patches back into a zero array of x_padded_shape.
+
+        grad_patches: (B, C_in, H_out, W_out, K, K)
+        Vectorized over B, C_in, H_out, W_out — only loops over the K x K
+        kernel offsets, so cost is O(K^2) Python-level iterations instead
+        of O(B * C_in * H_out * W_out).
+        """
+        H_out, W_out = grad_patches.shape[2], grad_patches.shape[3]
+        grad_x_padded = np.zeros(x_padded_shape, dtype=grad_patches.dtype)
+
+        row0 = np.arange(H_out) * S  # top-left row of each output window
+        col0 = np.arange(W_out) * S  # top-left col of each output window
+
+        for kh in range(K):
+            for kw in range(K):
+                rows = row0 + kh  # (H_out,)
+                cols = col0 + kw  # (W_out,)
+                # For a fixed (kh, kw), (rows, cols) are all distinct
+                # positions across H_out x W_out, so this += is safe
+                # (no duplicate-index accumulation issue).
+                grad_x_padded[:, :, rows[:, None], cols[None, :]] += grad_patches[:, :, :, :, kh, kw]
+
+        return grad_x_padded
 
     def forward(self, x: Tensor) -> Tensor:
         """
@@ -166,7 +190,7 @@ class Conv2d(Module):
         children = [x, self.weight]
         if self.has_bias:
             children.append(self.bias)
-        
+
         out = Tensor(output_data, _children=tuple(children), _op='Conv2d')
 
         # --- 3. Define Backward Pass ---
@@ -186,37 +210,25 @@ class Conv2d(Module):
                     grad_weight = np.einsum('bohw, bchwkl -> ockl', grad_output, patches)
                     self.weight.grad += grad_weight
 
-                # --- 3c. Calculate dL/dx ---
+                # --- 3c. Calculate dL/dx (vectorized col2im-style scatter-add) ---
                 if x.requires_grad:
-                    # Calculate dL/d(patches)
-                    # 'bohw, ockl -> bchwkl'
                     grad_patches = np.einsum('bohw, ockl -> bchwkl', grad_output, self.weight.data)
-                    
-                    # Create a zero-padded array for the gradient
-                    grad_x_padded = np.zeros_like(x_padded_data)
-                    
-                    for b in range(B):
-                        for c in range(C_in):
-                            for h in range(H_out):
-                                for w in range(W_out):
-                                    # Find the window in the padded gradient array
-                                    h_start, w_start = h * S, w * S
-                                    h_end, w_end = h_start + K, w_start + K
-                                    
-                                    # Add the gradient from this patch
-                                    grad_x_padded[b, c, h_start:h_end, w_start:w_end] += grad_patches[b, c, h, w, :, :]
-                    
+
+                    grad_x_padded = self._col2im_accumulate(
+                        grad_patches, x_padded_data.shape, K, S
+                    )
+
                     # Un-pad the gradient to get dL/dx
                     if P > 0:
                         grad_x = grad_x_padded[:, :, P:-P, P:-P]
                     else:
                         grad_x = grad_x_padded
-                    
+
                     assert grad_x.shape == x.data.shape
                     x.grad += grad_x
-            
+
             out._backward = _backward
-            
+
         return out
 
     def __repr__(self) -> str:
@@ -252,21 +264,22 @@ class Conv1d(Module):
             bias: If ``True``, adds a learnable bias term.
             dtype: Data type for parameters.
         """
+        super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
         self.has_bias = bias
+        self.dtype = dtype if dtype is not None else np.float64
 
         _weight = np.random.randn(
-            out_channels, in_channels, kernel_size) 
-        self.weight = Tensor(_weight, requires_grad=True,dtype=dtype)
-        initializers.He_normal(self.weight, nonlinearity='relu')
+            out_channels, in_channels, kernel_size)
+        self.weight = Tensor(_weight, requires_grad=True, dtype=self.dtype)
 
         if self.has_bias:
             _bias = np.zeros((1, out_channels))
-            self.bias = Tensor(_bias, requires_grad=True, dtype=dtype)
+            self.bias = Tensor(_bias, requires_grad=True, dtype=self.dtype)
         else:
             self.bias = None
 
@@ -285,6 +298,27 @@ class Conv1d(Module):
             shape=(B, C_in, L_out, K),
             strides=(B_stride, C_stride, L_stride * S, L_stride)
         )
+
+    @staticmethod
+    def _col2im_accumulate(grad_patches: np.ndarray, x_padded_shape: Tuple[int, int, int], K: int, S: int) -> np.ndarray:
+        """
+        Scatter-add grad_patches back into a zero array of x_padded_shape.
+
+        grad_patches: (B, C_in, L_out, K)
+        Vectorized over B, C_in, L_out — only loops over the K kernel
+        offsets, so cost is O(K) Python-level iterations instead of
+        O(B * C_in * L_out).
+        """
+        L_out = grad_patches.shape[2]
+        grad_x_padded = np.zeros(x_padded_shape, dtype=grad_patches.dtype)
+
+        pos0 = np.arange(L_out) * S  # start position of each output window
+
+        for k in range(K):
+            idx = pos0 + k  # (L_out,) — distinct positions for a fixed k
+            grad_x_padded[:, :, idx] += grad_patches[:, :, :, k]
+
+        return grad_x_padded
 
     def forward(self, x: Tensor) -> Tensor:
         """
@@ -319,7 +353,7 @@ class Conv1d(Module):
         children = [x, self.weight]
         if self.has_bias:
             children.append(self.bias)
-        
+
         out = Tensor(output_data, _children=tuple(children), _op='Conv1d')
 
         # --- 3. Define Backward Pass ---
@@ -330,7 +364,7 @@ class Conv1d(Module):
 
                 # --- 3a. Calculate dL/db ---
                 if self.has_bias and self.bias.requires_grad:
-                    grad_bias = grad_output.sum(axis=(0, 2)) # Shape (O,)
+                    grad_bias = grad_output.sum(axis=(0, 2))  # Shape (O,)
                     self.bias.grad += grad_bias.reshape(self.bias.data.shape)
 
                 # --- 3b. Calculate dL/dw ---
@@ -339,141 +373,204 @@ class Conv1d(Module):
                     grad_weight = np.einsum('bol, bclk -> ock', grad_output, patches)
                     self.weight.grad += grad_weight
 
-                # --- 3c. Calculate dL/dx ---
+                # --- 3c. Calculate dL/dx (vectorized col2im-style scatter-add) ---
                 if x.requires_grad:
-                    # Calculate dL/d(patches)
-                    # 'bol, ock -> bclk'
                     grad_patches = np.einsum('bol, ock -> bclk', grad_output, self.weight.data)
-                    
-                    # Create a zero-padded array for the gradient
-                    grad_x_padded = np.zeros_like(x_padded_data)
-                    
-                    # We cannot use the strided view for a scatter-add.
-                    # We must loop manually.
-                    for b in range(B):
-                        for c in range(C_in):
-                            for l in range(L_out):
-                                # Find the window in the padded gradient array
-                                l_start = l * S
-                                l_end = l_start + K
-                                
-                                # Add the gradient from this patch
-                                grad_x_padded[b, c, l_start:l_end] += grad_patches[b, c, l, :]
-                    
+
+                    grad_x_padded = self._col2im_accumulate(
+                        grad_patches, x_padded_data.shape, K, S
+                    )
+
                     # Un-pad the gradient to get dL/dx
                     if P > 0:
                         grad_x = grad_x_padded[:, :, P:-P]
                     else:
                         grad_x = grad_x_padded
-                    
+
                     assert grad_x.shape == x.data.shape
                     x.grad += grad_x
-            
+
             out._backward = _backward
-            
+
         return out
 
     def __repr__(self) -> str:
-            return (f"Conv1d(in_channels={self.in_channels}, "
-                    f"out_channels={self.out_channels}, "
-                    f"kernel_size={self.kernel_size}, "
-                    f"stride={self.stride}, "
-                    f"padding={self.padding}, "
-                    f"bias={self.has_bias})")
+        return (f"Conv1d(in_channels={self.in_channels}, "
+                f"out_channels={self.out_channels}, "
+                f"kernel_size={self.kernel_size}, "
+                f"stride={self.stride}, "
+                f"padding={self.padding}, "
+                f"bias={self.has_bias})")
 
     def __str__(self):
         return self.__repr__()
 
+class BatchNorm2d(Module):
+    """Batch Normalization over a batch of 4-D inputs.
 
-class BatchNorm1d(Module):
-    """Batch Normalization over a batch of 2-D or 3-D inputs.
-
-    During training, normalizes each feature across the batch and maintains
-    running statistics for use at evaluation time.
-
-    Reference: https://arxiv.org/abs/1502.03167
+    Typically used for spatial inputs (e.g., images) of shape (N, C, H, W).
+    Normalizes over the batch, height, and width dimensions.
     """
 
     def __init__(self, num_features: int, eps: float = 1e-5, momentum: float = 0.1, affine: bool = True) -> None:
-        """Create a BatchNorm1d layer.
+        """Create a BatchNorm2d layer.
 
         Args:
-            num_features: Number of features/channels to normalize.
+            num_features: Number of channels (C) to normalize.
             eps: Small constant added to the denominator for numerical stability.
-            momentum: Momentum factor for exponential moving average of
-                running mean and variance.
-            affine: If ``True``, learnable scale (gamma) and shift (beta)
-                parameters are added.
+            momentum: Momentum factor for exponential moving average of running stats.
+            affine: If ``True``, learnable scale (gamma) and shift (beta) are added.
         """
+        super().__init__()
         self.num_features = num_features
         self.eps = eps
         self.momentum = momentum
-        self.training = True
         self.affine = affine
         
+        # Shape (1, C, 1, 1) allows automatic broadcasting over (N, C, H, W)
+        shape = (1, num_features, 1, 1)
+        
         if affine:
-            self.gamma = Tensor(np.ones((1, num_features)), requires_grad=True)
-            self.beta = Tensor(np.zeros((1, num_features)), requires_grad=True)
+            self.gamma = Tensor(np.ones(shape), requires_grad=True)
+            self.beta = Tensor(np.zeros(shape), requires_grad=True)
         else:
-            self.gamma = Tensor(np.ones((1, num_features)), requires_grad=False)
-            self.beta = Tensor(np.zeros((1, num_features)), requires_grad=False)
+            self.gamma = Tensor(np.ones(shape), requires_grad=False)
+            self.beta = Tensor(np.zeros(shape), requires_grad=False)
             
-        self.running_mean = Tensor(np.zeros((1, num_features)), requires_grad=False)
-        self.running_var = Tensor(np.ones((1, num_features)), requires_grad=False)
+        self.running_mean = Tensor(np.zeros(shape), requires_grad=False)
+        self.running_var = Tensor(np.ones(shape), requires_grad=False)
 
     def forward(self, x: Tensor) -> Tensor:
-        """Normalize the input tensor.
-
-        Args:
-            x: Input tensor of shape ``(batch_size, num_features)`` or
-                ``(batch_size, seq_len, num_features)``.
-
-        Returns:
-            Normalized tensor of the same shape.
-        """
-        orig_shape = x.shape
-        # Ensure parameters run in the same dtype as the input to avoid
-        # upcasting during arithmetic. If parameters were initialized with a
-        # different dtype (e.g., float64) we cast them to the input dtype.
+        """Normalize the 4D input tensor."""
+        assert len(x.shape) == 4, f"Input tensor must be 4D (N, C, H, W), got {x.shape}"
+        
+        # Match parameter dtype to input dtype
         target_dtype = x.data.dtype
         if self.gamma.data.dtype != target_dtype:
             self.gamma.data = self.gamma.data.astype(target_dtype)
             self.beta.data = self.beta.data.astype(target_dtype)
             self.running_mean.data = self.running_mean.data.astype(target_dtype)
             self.running_var.data = self.running_var.data.astype(target_dtype)
-        if len(x.shape) == 3:
-            x = x.reshape((-1, x.shape[-1]))
-        
-        assert len(x.shape) == 2, f"Input tensor must be 2D or 3D, got shape {orig_shape}"
-        
+            
         if self.training:
-            batch_mean = x.mean(axis=0, keepdims=True)
+            # Calculate mean and var across N, H, and W (axes 0, 2, and 3)
+            # Resulting shape will automatically be (1, C, 1, 1) if keepdims=True
+            batch_mean = x.mean(axis=(0, 2, 3), keepdims=True)
             centered = x - batch_mean
-            batch_var = (centered ** 2).mean(axis=0, keepdims=True)
+            batch_var = (centered ** 2).mean(axis=(0, 2, 3), keepdims=True)
             
             x_normalized = centered / (batch_var + self.eps).sqrt()
             
+            # Update running stats
             self.running_mean.data = (1 - self.momentum) * self.running_mean.data + \
                                    self.momentum * batch_mean.data
+            
+            # Unbiased variance update (Bessel's correction)
+            # m = N * H * W
+            m = x.shape[0] * x.shape[2] * x.shape[3]
+            unbiased_var_data = batch_var.data * (m / (m - 1)) if m > 1 else batch_var.data
+            
             self.running_var.data = (1 - self.momentum) * self.running_var.data + \
-                                  self.momentum * batch_var.data
+                                  self.momentum * unbiased_var_data
         else:
+            # Eval mode: use running statistics
             x_normalized = (x - self.running_mean) / (self.running_var + self.eps).sqrt()
         
+        # Affine transformation
         out = self.gamma * x_normalized + self.beta
-        
-        if len(orig_shape) == 3:
-            out = out.reshape(orig_shape)
-            
         return out
     
-
     def __repr__(self) -> str:
-        num_features = self.gamma.shape[1]
-        return f"BatchNorm1d(num_features={num_features}, eps={self.eps}, momentum={self.momentum})"
+        return f"BatchNorm2d(num_features={self.num_features}, eps={self.eps}, momentum={self.momentum})"
     
     def __str__(self) -> str:
         return self.__repr__()
+
+
+
+class BatchNorm1d(Module):
+    """Batch Normalization over a batch of 2-D or 3-D inputs.
+    
+    Matches PyTorch exactly:
+    - Input shape: (N, C) or (N, C, L) where C = num_features
+    - Normalizes across the batch (and sequence L, if 3D) dimensions.
+    """
+
+    def __init__(self, num_features: int, eps: float = 1e-5, momentum: float = 0.1, affine: bool = True) -> None:
+        super().__init__()
+        self.num_features = num_features
+        self.eps = eps
+        self.momentum = momentum
+        self.affine = affine
+        
+        # Initialize flat arrays, we will reshape them dynamically in forward 
+        # depending on whether the input is 2D or 3D
+        if affine:
+            self.gamma = Tensor(np.ones((num_features,)), requires_grad=True)
+            self.beta = Tensor(np.zeros((num_features,)), requires_grad=True)
+        else:
+            self.gamma = Tensor(np.ones((num_features,)), requires_grad=False)
+            self.beta = Tensor(np.zeros((num_features,)), requires_grad=False)
+            
+        self.running_mean = Tensor(np.zeros((num_features,)), requires_grad=False)
+        self.running_var = Tensor(np.ones((num_features,)), requires_grad=False)
+
+    def forward(self, x: Tensor) -> Tensor:
+        dim = len(x.shape)
+        assert dim in (2, 3), f"BatchNorm1d requires 2D or 3D input, got {dim}D"
+        assert x.shape[1] == self.num_features, f"Expected {self.num_features} channels, got {x.shape[1]}"
+        
+        # Match dtypes to prevent upcasting
+        target_dtype = x.data.dtype
+        if self.gamma.data.dtype != target_dtype:
+            self.gamma.data = self.gamma.data.astype(target_dtype)
+            self.beta.data = self.beta.data.astype(target_dtype)
+            self.running_mean.data = self.running_mean.data.astype(target_dtype)
+            self.running_var.data = self.running_var.data.astype(target_dtype)
+
+        # Set up broadcast shape for parameters: (1, C) for 2D, (1, C, 1) for 3D
+        view_shape = (1, self.num_features) if dim == 2 else (1, self.num_features, 1)
+        reduce_axes = (0,) if dim == 2 else (0, 2)
+        
+        # Reshape parameters for broadcasting
+        gamma_view = self.gamma.reshape(*view_shape)
+        beta_view = self.beta.reshape(*view_shape)
+        running_mean_view = self.running_mean.reshape(*view_shape)
+        running_var_view = self.running_var.reshape(*view_shape)
+        
+        if self.training:
+            # 1. Batch Mean and Variance
+            batch_mean = x.mean(axis=reduce_axes, keepdims=True)
+            centered = x - batch_mean
+            
+            # PyTorch uses biased variance for normalizing the forward pass
+            batch_var = (centered ** 2).mean(axis=reduce_axes, keepdims=True)
+            
+            x_normalized = centered / (batch_var + self.eps).sqrt()
+            
+            # 2. Update Running Statistics
+            # Calculate number of elements we are normalizing over (m)
+            m = x.shape[0] if dim == 2 else x.shape[0] * x.shape[2]
+            
+            # Use unbiased variance for the running stats (Bessel's correction)
+            unbiased_var = batch_var.data * (m / (m - 1)) if m > 1 else batch_var.data
+            
+            # Update EMA (using squeezed arrays to update the 1D buffers)
+            self.running_mean.data = (1 - self.momentum) * self.running_mean.data + \
+                                     self.momentum * batch_mean.data.reshape(self.num_features)
+                                     
+            self.running_var.data = (1 - self.momentum) * self.running_var.data + \
+                                    self.momentum * unbiased_var.reshape(self.num_features)
+        else:
+            # Evaluation mode: use running statistics
+            x_normalized = (x - running_mean_view) / (running_var_view + self.eps).sqrt()
+            
+        out = gamma_view * x_normalized + beta_view
+        return out
+        
+    def __repr__(self) -> str:
+        return f"BatchNorm1d({self.num_features}, eps={self.eps}, momentum={self.momentum}, affine={self.affine})"
+
 
 
 class LayerNorm(Module):
@@ -492,6 +589,7 @@ class LayerNorm(Module):
             dim: Size of the last dimension of input tensors.
             eps: Small constant for numerical stability.
         """
+        super().__init__()
         self.eps = eps
         self.gamma = Tensor(np.ones((1, dim)), requires_grad=True)
         self.beta = Tensor(np.zeros((1, dim)), requires_grad=True)
@@ -520,9 +618,7 @@ class LayerNorm(Module):
         return out 
     
 class Embedding(Module):
-    """A lookup table that maps integer indices to dense vectors.
-
-    Weights are initialized with He normal initialization.
+    """A lookup table that maps integer indices to dense vectors.s
     """
 
     def __init__(self, num_embeddings: int, embedding_dim: int, dtype: Optional[npt.DTypeLike] = None) -> None:
@@ -533,12 +629,12 @@ class Embedding(Module):
             embedding_dim: Dimension of each embedding vector.
             dtype: Data type for the embedding weight matrix.
         """
+        super().__init__()
         self.num_embeddings = num_embeddings 
         self.embedding_dim = embedding_dim  
-        weight = np.random.randn(num_embeddings, embedding_dim)  
-        self.weight = Tensor(weight, requires_grad=True,dtype=dtype) 
-        initializers.He_normal(self.weight, nonlinearity='relu')
-
+        weight = np.random.randn(num_embeddings, embedding_dim)
+        self.dtype = dtype if dtype is not None else np.float64
+        self.weight = Tensor(weight, requires_grad=True,dtype=self.dtype)
 
     def forward(self, indices: Union[int, slice, tuple]) -> Tensor:
         """Look up embeddings for the given indices.
@@ -572,12 +668,11 @@ class Dropout(Module):
         assert 0.0 <= p < 1.0, "Dropout probability must be in [0.0, 1.0) range"
         self.p = p
 
-    def forward(self, x: Tensor, training: bool=False) -> Tensor:
-        self.training = training 
+    def forward(self, x: Tensor) -> Tensor: # self.Training is set in the Module init 
         if not self.training:
             return x
-        mask = (np.random.rand(*x.data.shape) > self.p).astype(np.float32)
-        mask_tensor = Tensor(mask, requires_grad=False)
+        mask = (np.random.rand(*x.data.shape) > self.p).astype(x.data.dtype)
+        mask_tensor = Tensor(mask, requires_grad=False, dtype=x.data.dtype)
         scale = 1.0 / (1.0 - self.p)
         return (x * mask_tensor) * scale
 
@@ -589,8 +684,13 @@ class MCDropout(Dropout):
     def __init__(self,p=0.5):
         super().__init__(p)  
     
-    def forward(self,x:Tensor)  -> Tensor: 
-        super().forward(x,training = True)
+    def forward(self,x:Tensor)  -> Tensor:
+        was_training = self.training
+        self.training = True
+        try:
+            return super().forward(x)
+        finally:
+            self.training = was_training
 
 class Flatten(Module):
     """Flatten all dimensions except the batch dimension.
@@ -623,7 +723,6 @@ def _to_pair(x: Union[int, Tuple[int, ...]]) -> Tuple[int, int]:
     raise ValueError("MaxPool2d: kernel_size/stride must be an int or a 2-tuple")
 
 
-
 class MaxPool2d(Module):
     """
     Applies a 2D max pooling over an input tensor.
@@ -640,10 +739,21 @@ class MaxPool2d(Module):
 
         self.cache: Dict[str, Any] = {}
 
+    def _get_patches_strided(self, x_data: np.ndarray, K_h: int, K_w: int, S_h: int, S_w: int) -> np.ndarray:
+        """Helper to create a strided view of input data."""
+        B, C, H_in_pad, W_in_pad = x_data.shape
+        H_out = (H_in_pad - K_h) // S_h + 1
+        W_out = (W_in_pad - K_w) // S_w + 1
+
+        B_stride, C_stride, H_stride, W_stride = x_data.strides
+
+        return np.lib.stride_tricks.as_strided(
+            x_data,
+            shape=(B, C, H_out, W_out, K_h, K_w),
+            strides=(B_stride, C_stride, H_stride * S_h, W_stride * S_w, H_stride, W_stride)
+        )
+
     def forward(self, x: Tensor) -> Tensor:
-        """
-        Performs the forward pass and builds the computation graph.
-        """
         assert len(x.shape) == 4, "MaxPool2d input must be 4D (B, C, H, W)"
         
         B, C, H_in, W_in = x.shape
@@ -651,10 +761,7 @@ class MaxPool2d(Module):
         S_h, S_w = self.stride
         P = self.padding
 
-        # --- 1. Forward Pass (Numpy/CuPy land) ---
-        
-        # Apply padding. We pad with -infinity so that padded values
-        # are never chosen as the maximum.
+        # --- 1. Forward Pass ---
         x_padded_data = np.pad(
             x.data, 
             ((0, 0), (0, 0), (P, P), (P, P)), 
@@ -662,78 +769,54 @@ class MaxPool2d(Module):
             constant_values=-np.inf
         )
         
-        padded_shape = x_padded_data.shape # (B, C, H_pad, W_pad)
-
-        # Calculate output dimensions
-        H_out = (H_in - K_h + 2 * P) // S_h + 1
-        W_out = (W_in - K_w + 2 * P) // S_w + 1
-
-        # Create output arrays
-        output_data = np.zeros((B, C, H_out, W_out))
+        # Get strided windows: Shape (B, C, H_out, W_out, K_h, K_w)
+        patches = self._get_patches_strided(x_padded_data, K_h, K_w, S_h, S_w)
         
-        indices = np.zeros((B, C, H_out, W_out, 2), dtype=int)
+        # Max along the kernel dimensions
+        output_data = np.max(patches, axis=(4, 5))
+        
+        # Find argmax over the flattened kernel area to get 1D index within window
+        patches_flat = patches.reshape(B, C, output_data.shape[2], output_data.shape[3], K_h * K_w)
+        argmax_idx = np.argmax(patches_flat, axis=-1)  # Shape (B, C, H_out, W_out)
 
-        # Loop-based forward pass to find maxes and store indices
-        for b in range(B):
-            for c in range(C):
-                for h in range(H_out):
-                    for w in range(W_out):
-                        h_start, w_start = h * S_h, w * S_w
-                        h_end, w_end = h_start + K_h, w_start + K_w
-                        
-                        window = x_padded_data[b, c, h_start:h_end, w_start:w_end]
-                        
-                        output_data[b, c, h, w] = np.max(window)
-                        
-                        # Convert to numpy for unravel_index (CuPy doesn't have it)
-                        window_np = window if np is np else np.asarray(window)
-                        h_idx_window, w_idx_window = np.unravel_index(np.argmax(window_np), window_np.shape)
-                        
-                        indices[b, c, h, w, 0] = h_start + h_idx_window
-                        indices[b, c, h, w, 1] = w_start + w_idx_window
-
-        # --- 2. Create Output Tensor (Autograd land) ---
+        # --- 2. Autograd Setup ---
         out = Tensor(output_data, _children=(x,), _op='MaxPool2d')
         
-        # Save context for backward pass
-        self.cache['input_padded_shape'] = padded_shape
-        self.cache['indices'] = indices
+        self.cache['input_padded_shape'] = x_padded_data.shape
+        self.cache['argmax_idx'] = argmax_idx
 
-        # --- 3. Define Backward Pass ---
+        # --- 3. Backward Pass ---
         if out.requires_grad:
             def _backward():
                 if not x.requires_grad:
                     return
 
-                # Get incoming gradient
                 grad_output = out.grad  # (B, C, H_out, W_out)
-                
-                # Get saved context
-                indices = self.cache['indices'] # (B, C, H_out, W_out, 2)
+                argmax_idx = self.cache['argmax_idx']
                 input_padded_shape = self.cache['input_padded_shape']
                 
-                # Create the gradient for the padded input
                 grad_x_padded = np.zeros(input_padded_shape)
                 
-                B, C, H_out, W_out = grad_output.shape
-
-                # Loop and "scatter" the gradients
-                for b in range(B):
-                    for c in range(C):
-                        for h in range(H_out):
-                            for w in range(W_out):
-                                # Get the (h, w) coordinate from the forward pass
-                                h_idx = indices[b, c, h, w, 0]
-                                w_idx = indices[b, c, h, w, 1]
-                                
-                                # Get the gradient value
-                                grad_val = grad_output[b, c, h, w]
-                                
-                                # Add it to the single max location.
-                                # We use += in case multiple output windows
-                                # (from overlapping strides) picked the same
-                                # input element as their max.
-                                grad_x_padded[b, c, h_idx, w_idx] += grad_val
+                # To vectorize the scatter, we use NumPy's advanced indexing / add.at
+                # Generate grids for B, C, H_out, W_out
+                B_dim, C_dim, H_out, W_out = grad_output.shape
+                
+                b_idx, c_idx, h_idx, w_idx = np.indices((B_dim, C_dim, H_out, W_out))
+                
+                # Convert flattened argmax inside window back to h and w offsets
+                h_offset = argmax_idx // K_w
+                w_offset = argmax_idx % K_w
+                
+                # Calculate absolute padded coordinates
+                abs_h = (h_idx * S_h) + h_offset
+                abs_w = (w_idx * S_w) + w_offset
+                
+                # Fast unbuffered scatter-add (Equivalent to your nested for-loops)
+                np.add.at(
+                    grad_x_padded, 
+                    (b_idx, c_idx, abs_h, abs_w), 
+                    grad_output
+                )
                 
                 # Un-pad the gradient
                 if P > 0:
@@ -741,7 +824,6 @@ class MaxPool2d(Module):
                 else:
                     grad_x = grad_x_padded
                 
-                # Accumulate gradient in the input tensor
                 x.grad += grad_x
 
             out._backward = _backward
@@ -751,7 +833,6 @@ class MaxPool2d(Module):
     def __repr__(self) -> str:
         return (f"MaxPool2d(kernel_size={self.kernel_size}, "
                 f"stride={self.stride}, padding={self.padding})")
-
 
 class MaxPool1d(Module):
     """
@@ -877,252 +958,6 @@ class MaxPool1d(Module):
         return (f"MaxPool1d(kernel_size={self.kernel_size}, "
                 f"stride={self.stride}, padding={self.padding})")
 
-
-
-class RNN(Module):
-    """Vanilla (Elman) RNN layer with tanh non-linearity.
-
-    At each time step *t* the hidden state is updated as::
-
-        h_t = tanh(x_t @ W_xh + h_{t-1} @ W_hh + b_h)
-
-    Notes:
-        * Expects input of shape ``(batch_size, time_steps, n_features)``.
-        * Parameters are lazily initialized on the first forward pass
-          once the input feature dimension is known.
-    """
-
-    def __init__(self, n_neurons: int = 1, return_sequence: bool = False, dtype: Optional[npt.DTypeLike] = None) -> None:
-        """Create an RNN layer.
-
-        Args:
-            n_neurons: Number of hidden units.
-            return_sequence: If ``True``, returns the hidden state at every
-                time step ``(batch_size, time_steps, n_neurons)``.
-                If ``False``, returns only the final hidden state
-                ``(batch_size, n_neurons)``.
-            dtype: Data type for parameters.
-        """
-        self.n_neurons = n_neurons
-        self.return_sequence = return_sequence
-        self.dtype = dtype
-
-        # Parameters will be lazily initialized on the first forward pass
-        # once we know the input feature dimension.
-        self._initialized = False
-        self.input_size: Optional[int] = None
-
-    def _init_parameters(self, n_features: int) -> None:
-        """Initialize RNN parameters based on the input feature size."""
-        self.input_size = n_features
-        # Xavier/Glorot-like scaling for stability
-        limit = np.sqrt(1.0 / max(1, n_features))  # np.sqrt for constant
-
-        Wxh = np.random.randn(n_features, self.n_neurons) * limit
-        Whh = np.random.randn(self.n_neurons, self.n_neurons) * limit
-        bh = np.zeros((1, self.n_neurons))
-
-        self.Wxh = Tensor(Wxh, requires_grad=True, dtype=self.dtype)
-        self.Whh = Tensor(Whh, requires_grad=True, dtype=self.dtype)
-        self.bh = Tensor(bh, requires_grad=True, dtype=self.dtype)
-
-        self._initialized = True
-
-    def forward(self, x: Tensor) -> Tensor:
-        """Perform the forward pass of the RNN.
-
-        Args:
-            x: Input tensor of shape (batch_size, time_steps, n_features).
-        Returns:
-            Tensor of shape (batch_size, time_steps, n_neurons) if
-            ``return_sequence=True`` else (batch_size, n_neurons).
-        """
-        assert len(x.shape) == 3, f"Expected input to be 3D got {len(x.shape)}"
-        batch_size, time_steps, n_features = x.shape
-
-        if not self._initialized:
-            self._init_parameters(n_features)
-        else:
-            assert (
-                n_features == self.input_size
-            ), f"RNN expected input feature size {self.input_size}, got {n_features}"
-
-        # Initial hidden state h_0 = 0
-        h_t = Tensor.zeros(batch_size, self.n_neurons, requires_grad=False)
-        outputs: List[Tensor] = []
-
-        for t in range(time_steps):
-            x_t = x[:, t, :]  # (batch_size, n_features)
-            h_t = (x_t @ self.Wxh + h_t @ self.Whh + self.bh).tanh()
-            if self.return_sequence:
-                outputs.append(h_t)
-
-        if self.return_sequence:
-            out_data = np.stack([h.data for h in outputs], axis=1)
-            out = Tensor(out_data, _children=tuple(outputs), _op='RNNSequence')
-            if out.requires_grad:
-                def _backward():
-                    grad_out = out.grad  # (B, T, H)
-                    for t, h in enumerate(outputs):
-                        if h.requires_grad:
-                            h.grad += grad_out[:, t, :]
-
-                out._backward = _backward
-
-            return out
-        else:
-            # Final hidden state already carries the full recurrent graph.
-            # No custom backward hook is needed in the non-sequence case.
-            return h_t
-
-
-    def __repr__(self) -> str:
-        base = f"RNN(n_neurons={self.n_neurons}, return_sequence={self.return_sequence}"
-        if self.input_size is not None:
-            base += f", input_size={self.input_size}"
-        return base + ")"
-
-    def __str__(self) -> str:
-        return self.__repr__()
-    
-class LSTM(Module):
-    """Basic (single-layer) LSTM over sequences.
-
-    Expects input of shape ``(batch_size, time_steps, input_size)``.
-
-    This implementation is intentionally minimal and supports:
-    - lazy initialization of weights on first forward pass
-    - optional initial states ``h_t`` and ``c_t``
-    - returning either the final hidden state or the full hidden sequence
-    """
-
-    def __init__(
-        self,
-        return_sequence: bool = False,
-        hidden_size: int = 1,
-        dtype: Optional[npt.DTypeLike] = None,
-    ) -> None:
-        super().__init__()
-        self.dtype = dtype
-        self.is_initialized = False
-        self.return_sequence = return_sequence
-        self.hidden_size = hidden_size
-
-        # Set on first forward pass.
-        self.input_size: Optional[int] = None
-
-    def _init_parameters(self, input_size: int, effective_dtype: npt.DTypeLike) -> None:
-        """Initialize LSTM parameters for a given input feature size."""
-        self.input_size = input_size
-
-        # Use small uniform scaling for stability.
-        limit = np.sqrt(1.0 / max(1, input_size))
-
-        def rand_w(in_dim: int, out_dim: int) -> Tensor:
-            data = (np.random.uniform(-limit, limit, size=(in_dim, out_dim))).astype(effective_dtype)
-            return Tensor(data, requires_grad=True, dtype=effective_dtype)
-
-        def rand_b(out_dim: int) -> Tensor:
-            data = np.zeros((1, out_dim), dtype=effective_dtype)
-            return Tensor(data, requires_grad=True, dtype=effective_dtype)
-
-        # Forget gate parameters
-        self.w_xf = rand_w(input_size, self.hidden_size)
-        self.w_hf = rand_w(self.hidden_size, self.hidden_size)
-        self.b_f = rand_b(self.hidden_size)
-
-        # Input gate parameters
-        self.w_xi = rand_w(input_size, self.hidden_size)
-        self.w_hi = rand_w(self.hidden_size, self.hidden_size)
-        self.b_i = rand_b(self.hidden_size)
-
-        # Output gate parameters
-        self.w_xo = rand_w(input_size, self.hidden_size)
-        self.w_ho = rand_w(self.hidden_size, self.hidden_size)
-        self.b_o = rand_b(self.hidden_size)
-
-        # Cell candidate parameters
-        self.w_xg = rand_w(input_size, self.hidden_size)
-        self.w_hg = rand_w(self.hidden_size, self.hidden_size)
-        self.b_g = rand_b(self.hidden_size)
-
-        self.is_initialized = True
-
-    def forward(
-        self,
-        x: Tensor,
-        c_t: Optional[Tensor] = None,
-        h_t: Optional[Tensor] = None,
-    ) -> tuple[Tensor, Tensor]:
-        """
-        Args:
-            x: (B, T, input_size)
-            c_t: Optional initial cell state, (B, hidden_size)
-            h_t: Optional initial hidden state, (B, hidden_size)
-
-        Returns:
-            - If ``return_sequence=False``: (h_T, c_T)
-            - If ``return_sequence=True``: (H_seq, c_T)
-        """
-        assert len(x.shape) == 3, f"Expected input to be 3D, got shape {x.shape}"
-        batch_size, time_steps, input_size = x.shape
-
-        effective_dtype: npt.DTypeLike = x.data.dtype if self.dtype is None else self.dtype
-        if self.dtype is not None and x.data.dtype != np.dtype(self.dtype):
-            raise ValueError(f"LSTM dtype mismatch: x dtype {x.data.dtype} != layer dtype {np.dtype(self.dtype)}")
-        if not self.is_initialized:
-            self._init_parameters(input_size, effective_dtype=effective_dtype)
-        else:
-            assert (
-                input_size == self.input_size
-            ), f"LSTM expected input feature size {self.input_size}, got {input_size}"
-
-        if c_t is not None:
-            assert c_t.shape == (batch_size, self.hidden_size), "c_t shape must be (batch_size,hidden_size)"
-            if c_t.dtype != np.dtype(effective_dtype):
-                raise ValueError(f"c_t dtype mismatch: {c_t.dtype} != {np.dtype(effective_dtype)}")
-        if h_t is not None:
-            assert h_t.shape == (batch_size, self.hidden_size), "h_t shape must be (batch_size,hidden_size)"
-            if h_t.dtype != np.dtype(effective_dtype):
-                raise ValueError(f"h_t dtype mismatch: {h_t.dtype} != {np.dtype(effective_dtype)}")
-
-        if h_t is None:
-            h_t = Tensor.zeros(batch_size, self.hidden_size, requires_grad=False, dtype=effective_dtype)
-        if c_t is None:
-            c_t = Tensor.zeros(batch_size, self.hidden_size, requires_grad=False, dtype=effective_dtype)
-
-        outputs: List[Tensor] = []
-
-        for t in range(time_steps):
-            x_t = x[:, t, :]  # (B, input_size)
-
-            # Gate computations
-            f_t = (x_t @ self.w_xf + h_t @ self.w_hf + self.b_f).sigmoid()
-            i_t = (x_t @ self.w_xi + h_t @ self.w_hi + self.b_i).sigmoid()
-            o_t = (x_t @ self.w_xo + h_t @ self.w_ho + self.b_o).sigmoid()
-            g_t = (x_t @ self.w_xg + h_t @ self.w_hg + self.b_g).tanh()
-
-            c_t = f_t * c_t + i_t * g_t
-            h_t = o_t * c_t.tanh()
-
-            if self.return_sequence:
-                outputs.append(h_t)
-
-        if self.return_sequence:
-            out_data = np.stack([h.data for h in outputs], axis=1)
-            h_seq = Tensor(out_data, _children=tuple(outputs), _op="LSTMSequence")
-            if h_seq.requires_grad:
-                def _backward() -> None:
-                    grad_out = h_seq.grad  # (B, T, H)
-                    for t, h in enumerate(outputs):
-                        if h.requires_grad:
-                            h.grad += grad_out[:, t, :]
-
-                h_seq._backward = _backward
-            return h_seq, c_t
-
-        return h_t, c_t
-
 class MultiHeadAttention(Module):
     """Multi-Head Attention (Vaswani et al., 2017).
 
@@ -1134,6 +969,7 @@ class MultiHeadAttention(Module):
         * Causal masking for autoregressive models.
         * Dropout regularization on attention weights.
         * Optional QKV bias.
+        * KV-Caching for efficient autoregressive decoding.
 
     Reference: https://arxiv.org/abs/1706.03762
     """
@@ -1178,88 +1014,99 @@ class MultiHeadAttention(Module):
         self.causal = causal
         self.max_seq_len = max_seq_len
         self.scale = 1.0 / (self.head_dim ** 0.5)
+        
         self.W_query = Linear(d_in, d_out, bias=bias, dtype=dtype)
         self.W_key = Linear(d_in, d_out, bias=bias, dtype=dtype)
         self.W_value = Linear(d_in, d_out, bias=bias, dtype=dtype)
         self.out_proj = Linear(d_out, d_out, bias=True, dtype=dtype)
         self.dropout_layer = Dropout(dropout)
+        
         self._causal_mask: Optional[Tensor] = None
         if causal and max_seq_len is not None:
-            mask = np.triu(np.ones((max_seq_len, max_seq_len), dtype=np.float32), k=1)
+            # Memory Optimization: Initialize directly as boolean instead of float32
+            mask = np.triu(np.ones((max_seq_len, max_seq_len), dtype=bool), k=1)
             self._causal_mask = Tensor(mask, requires_grad=False)
+            
         self.ptr_current_pos = 0
         self.cache_k: Optional[Tensor] = None
         self.cache_v: Optional[Tensor] = None
     
     def forward(self, x: Tensor, use_cache: bool = False) -> Tensor:
-            """
-            Forward pass of Multi-Head Attention.
-            
-            Args:
-                x: Input tensor of shape (batch_size, seq_len, d_in)
-                use_cache: Whether to use cached values (default: False)
-            
-            Returns:
-                Output tensor of shape (batch_size, seq_len, d_out)
-            """
-            B, T, _ = x.shape
-            Q = self.W_query(x)
-            K = self.W_key(x)
-            V = self.W_value(x)
+        """
+        Forward pass of Multi-Head Attention.
+        
+        Args:
+            x: Input tensor of shape (batch_size, seq_len, d_in)
+            use_cache: Whether to use cached values (default: False)
+        
+        Returns:
+            Output tensor of shape (batch_size, seq_len, d_out)
+        """
+        B, T, _ = x.shape
+        Q = self.W_query(x)
+        K = self.W_key(x)
+        V = self.W_value(x)
 
-            Q = Q.reshape(B, T, self.num_heads, self.head_dim)
-            K = K.reshape(B, T, self.num_heads, self.head_dim)
-            V = V.reshape(B, T, self.num_heads, self.head_dim)
+        Q = Q.reshape(B, T, self.num_heads, self.head_dim)
+        K = K.reshape(B, T, self.num_heads, self.head_dim)
+        V = V.reshape(B, T, self.num_heads, self.head_dim)
 
-            if use_cache:
-                if self.cache_k is None or self.cache_v is None:
-                    self.cache_k = K
-                    self.cache_v = V
-                else:
-                    self.cache_k = Tensor.concatenate([self.cache_k, K], axis=1)
-                    self.cache_v = Tensor.concatenate([self.cache_v, V], axis=1)
-                K = self.cache_k
-                V = self.cache_v
+        if use_cache:
+            if self.cache_k is None or self.cache_v is None:
+                self.cache_k = K
+                self.cache_v = V
             else:
-                # Reset the pointer if we aren't using cache
-                self.ptr_current_pos = 0
+                self.cache_k = Tensor.concatenate([self.cache_k, K], axis=1)
+                self.cache_v = Tensor.concatenate([self.cache_v, V], axis=1)
+            K = self.cache_k
+            V = self.cache_v
+        else:
+            # Reset the pointer if we aren't using cache
+            self.ptr_current_pos = 0
 
-            # Calculate the total key sequence length (important for the mask shape)
-            T_k = K.shape[1]
-            
-            Q = Q.transpose((0, 2, 1, 3))
-            K = K.transpose((0, 2, 1, 3)) 
-            V = V.transpose((0, 2, 1, 3))  
-            
-            attn_scores = (Q @ K.transpose((0, 1, 3, 2))) * self.scale
+        # Calculate the total key sequence length (important for the mask shape)
+        T_k = K.shape[1]
+        
+        Q = Q.transpose((0, 2, 1, 3))
+        K = K.transpose((0, 2, 1, 3)) 
+        V = V.transpose((0, 2, 1, 3))  
+        
+        attn_scores = (Q @ K.transpose((0, 1, 3, 2))) * self.scale
 
-            mask = None
-            if self.causal and self._causal_mask is not None:
+        mask = None
+        if self.causal:
+            if self._causal_mask is not None:
                 if use_cache:
                     # Queries correspond to: ptr_current_pos -> ptr_current_pos + T
                     # Keys correspond to: 0 -> ptr_current_pos + T
-                    mask = self._causal_mask.bool()[ 
+                    mask = self._causal_mask[ 
                         self.ptr_current_pos : self.ptr_current_pos + T,
                         : self.ptr_current_pos + T 
                     ]
                     self.ptr_current_pos += T
                 else:
-                    mask = self._causal_mask.bool()[:T, :T]
+                    mask = self._causal_mask[:T, :T]
                     self.ptr_current_pos = T # Advance pointer in case cache is used next pass
+            else:
+                # Dynamic masking if max_seq_len was not provided
+                # k = T_k - T + 1 ensures the diagonal aligns correctly 
+                # whether we are passing a full sequence or a single cached token
+                dynamic_mask = np.triu(np.ones((T, T_k), dtype=bool), k=(T_k - T + 1))
+                mask = Tensor(dynamic_mask, requires_grad=False)
+        
+        if mask is not None:
+            # Broadcast mask from (T, T_k) to match attn_scores (B, num_heads, T, T_k)
+            mask_broadcast = mask.reshape(1, 1, T, T_k)
+            attn_scores = attn_scores.masked_fill(mask_broadcast, float('-inf'))
             
-            if mask is not None:
-                # Broadcast mask from (T, T_k) to match attn_scores (B, num_heads, T, T_k)
-                mask_broadcast = mask.reshape(1, 1, T, T_k)
-                attn_scores = attn_scores.masked_fill(mask_broadcast, float('-inf'))
-                
-            attn_weights = attn_scores.softmax(axis=-1)
-            attn_weights = self.dropout_layer(attn_weights)
-            
-            context = attn_weights @ V
-            context = context.transpose((0, 2, 1, 3)).reshape(B, T, self.d_out)
-            
-            out = self.out_proj(context)
-            return out
+        attn_weights = attn_scores.softmax(axis=-1)
+        attn_weights = self.dropout_layer(attn_weights)
+        
+        context = attn_weights @ V
+        context = context.transpose((0, 2, 1, 3)).reshape(B, T, self.d_out)
+        
+        out = self.out_proj(context)
+        return out
     
     def reset_cache(self) -> None:
         """Reset the cached keys and values for autoregressive decoding."""
@@ -1276,7 +1123,6 @@ class MultiHeadAttention(Module):
     
     def __str__(self) -> str:
         return self.__repr__()
-
 
 class AveragePool2d(Module):
     """
@@ -1370,7 +1216,15 @@ class AveragePool2d(Module):
         if self.count_include_pad:
             pooled = patches.mean(axis=(-2, -1))
         else:
-            pooled = patches.mean(axis=(-2, -1))
+            valid = np.pad(
+                np.ones((H_in, W_in), dtype=x.data.dtype),
+                ((ph, ph), (pw, pw)),
+                mode="constant",
+                constant_values=0.0,
+            )
+            valid_patches = self._get_patches_strided(valid[None, None, ...])
+            counts = valid_patches.sum(axis=(-2, -1))
+            pooled = patches.sum(axis=(-2, -1)) / counts
 
         out = Tensor(pooled, _children=(x,), _op="AvgPool2d")
 
@@ -1382,6 +1236,15 @@ class AveragePool2d(Module):
                 if x.requires_grad:
                     kh, kw = self.kernel_size
                     area = kh * kw if self.count_include_pad else None
+
+                    valid = np.pad(
+                        np.ones((H_in, W_in), dtype=x.data.dtype),
+                        ((ph, ph), (pw, pw)),
+                        mode="constant",
+                        constant_values=0.0,
+                    )
+                    valid_patches = self._get_patches_strided(valid[None, None, ...])
+                    counts = valid_patches.sum(axis=(-2, -1))
 
                     grad_x_padded = np.zeros_like(x_padded)
 
@@ -1399,11 +1262,8 @@ class AveragePool2d(Module):
                                         w_start:w_start + kw
                                     ]
 
-                                    if self.count_include_pad:
-                                        window += grad_output[b, c, ho, wo] / area
-                                    else:
-                                        # If not counting pad we'd need a mask
-                                        pass
+                                    divisor = area if self.count_include_pad else counts[ho, wo]
+                                    window += grad_output[b, c, ho, wo] / divisor
 
                     if ph > 0 or pw > 0:
                         grad_x = grad_x_padded[:, :, ph:-ph if ph else None, pw:-pw if pw else None]

@@ -868,6 +868,30 @@ class Tensor:
             out._backward = _backward
         return out
 
+    @staticmethod
+    def concatenate(tensors: list['Tensor'], axis: int = 0) -> 'Tensor':
+        """Concatenate tensors along an axis while preserving gradients."""
+        if not tensors:
+            raise ValueError("concatenate requires at least one tensor")
+        dtype = tensors[0].dtype
+        if any(t.dtype != dtype for t in tensors[1:]):
+            raise ValueError("All tensors must have the same dtype")
+
+        out = Tensor(np.concatenate([t.data for t in tensors], axis=axis),
+                     tuple(tensors), 'concatenate')
+        offsets = np.cumsum([0] + [t.shape[axis] for t in tensors])
+
+        def _backward():
+            for index, tensor in enumerate(tensors):
+                if tensor.requires_grad:
+                    slices = [slice(None)] * out.data.ndim
+                    slices[axis] = slice(offsets[index], offsets[index + 1])
+                    tensor.grad += out.grad[tuple(slices)]
+
+        if out.requires_grad:
+            out._backward = _backward
+        return out
+
     # --- Backward Pass ---
     def backward(self) -> None:
         """
