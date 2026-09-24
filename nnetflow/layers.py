@@ -21,7 +21,7 @@ class Linear(Module):
             out_features: Number of output features (neurons).
             bias: If ``True``, a learnable bias vector is added.
             dtype: Data type for parameters (e.g. ``np.float32``). Defaults
-                to ``np.float64`` so the layer will naturally reject input
+                to ``np.float32`` so the layer will naturally reject input
                 tensors with a different dtype unless you pass an explicit
                 dtype to match the data.
         """
@@ -29,7 +29,7 @@ class Linear(Module):
 
         self.in_features = in_features
         self.out_features = out_features
-        self.dtype = dtype if dtype is not None else np.float64
+        self.dtype = dtype if dtype is not None else np.float32
 
         self.weight = Tensor(
             np.random.randn(in_features, out_features),
@@ -99,7 +99,7 @@ class Conv2d(Module):
         self.stride = stride
         self.padding = padding
         self.has_bias = bias
-        self.dtype = dtype if dtype is not None else np.float64
+        self.dtype = dtype if dtype is not None else np.float32
 
         _weight = np.random.randn(
             out_channels, in_channels, kernel_size, kernel_size)
@@ -271,7 +271,7 @@ class Conv1d(Module):
         self.stride = stride
         self.padding = padding
         self.has_bias = bias
-        self.dtype = dtype if dtype is not None else np.float64
+        self.dtype = dtype if dtype is not None else np.float32
 
         _weight = np.random.randn(
             out_channels, in_channels, kernel_size)
@@ -633,7 +633,7 @@ class Embedding(Module):
         self.num_embeddings = num_embeddings 
         self.embedding_dim = embedding_dim  
         weight = np.random.randn(num_embeddings, embedding_dim)
-        self.dtype = dtype if dtype is not None else np.float64
+        self.dtype = dtype if dtype is not None else np.float32
         self.weight = Tensor(weight, requires_grad=True,dtype=self.dtype)
 
     def forward(self, indices: Union[int, slice, tuple]) -> Tensor:

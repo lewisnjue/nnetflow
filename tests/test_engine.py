@@ -409,6 +409,11 @@ class TestEngine:
         assert np.allclose(y_nt.data, y_tt.item(), atol=1e-5)
         assert np.allclose(x_nt.grad, x_tt.grad.numpy(), atol=1e-5)
 
+    def test_gelu_preserves_float32_dtype(self):
+        x = Tensor(np.random.randn(3, 4).astype(np.float32), requires_grad=True)
+        out = x.gelu()
+        assert out.dtype == np.float32
+
     def test_sigmoid(self):
         x_nt, x_tt = _pair(4, 4)
         y_nt = x_nt.sigmoid().sum()

@@ -39,7 +39,8 @@ class Tensor:
                 any parent tensor requires gradients.
             dtype: Data type of the tensor (e.g. ``np.float32``).  If
                 ``None``, the dtype is inferred from *data* (or defaults
-                to ``np.float64`` for plain Python scalars/lists).
+                to ``np.float32
+                `` for plain Python scalars/lists).
             copy: if `True`, and you used numpy array as input, the data will 
                 be copied to avoid unexpected changes in the original array.
         """
@@ -52,7 +53,7 @@ class Tensor:
         elif hasattr(data, 'dtype'):
             target_dtype = data.dtype
         else:
-            target_dtype = np.float64
+            target_dtype = np.float32
 
         if hasattr(data, 'dtype'):
             self.data = data.astype(target_dtype, copy=copy)
@@ -73,7 +74,7 @@ class Tensor:
             self.requires_grad = bool(requires_grad)
 
         if self.requires_grad: # ?? bug 
-            grad_dtype = np.float64 if self.data.dtype not in [np.float64, np.float32] else self.data.dtype
+            grad_dtype = np.float32 if self.data.dtype not in [np.float32, np.float32] else self.data.dtype
             self.grad: Optional[Any] =  np.zeros_like(self.data, dtype=grad_dtype)
         else:
             self.grad: Optional[Any] = None
@@ -174,7 +175,7 @@ class Tensor:
     def zero_grad(self) -> None:
         """Resets the gradient of this tensor to zero."""
         if self.requires_grad: ## bug ?? 
-            grad_dtype = np.float64 if self.data.dtype not in [np.float64, np.float32] else self.data.dtype
+            grad_dtype = np.float32 if self.data.dtype not in [np.float32, np.float32] else self.data.dtype
             self.grad = np.zeros_like(self.data, dtype=grad_dtype)
 
     
@@ -557,7 +558,10 @@ class Tensor:
         # scipy.special.erf works with numpy arrays, so convert if needed
         data_np = np.asarray(self.data)
         erf_result = sp.erf(data_np / np.sqrt(2))
-        out_data = 0.5 * self.data * (1 + erf_result)
+        input_dtype = self.data.dtype
+        out_data = np.asarray(
+            0.5 * self.data * (1 + erf_result), dtype=input_dtype
+        )
         out = Tensor(out_data, (self,), 'gelu')
         
         def _backward():

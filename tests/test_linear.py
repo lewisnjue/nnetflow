@@ -88,8 +88,8 @@ class TestLinear:
             layer.forward(x)
 
     def test_dtype_mismatch_between_input_and_layer_raises(self):
-        layer = Linear(4, 3) 
-        x = Tensor.randn(6, 4)  
+        layer = Linear(4, 3, dtype=np.float32)
+        x = Tensor.randn(6, 4, dtype=np.float64)
         with pytest.raises(ValueError):
             layer.forward(x)
 

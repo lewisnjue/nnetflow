@@ -12,7 +12,8 @@ data/
 data 
 # C extensions
 *.so
-
+nbs/
+nbs
 # Distribution / packaging
 .Python
 build/

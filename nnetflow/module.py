@@ -25,7 +25,7 @@ class Module:
                 
                 if x.grad is not None and x.grad.dtype != dtype:
                     is_integer = np.issubdtype(dtype, np.integer)
-                    target_grad_dtype = np.float64 if is_integer else dtype
+                    target_grad_dtype = np.float32 if is_integer else dtype
                     x.grad = x.grad.astype(target_grad_dtype)
                 return x
             
@@ -131,7 +131,7 @@ class Module:
     def parameters(self):
         params = []
         for name, value in vars(self).items():
-            if hasattr(value, 'data'):
+            if isinstance(value, Tensor):
                 params.append(value)
             elif isinstance(value, Module):
                 params.extend(value.parameters())
@@ -139,6 +139,8 @@ class Module:
                 for item in value:
                     if isinstance(item, Module):
                         params.extend(item.parameters())
+                    elif isinstance(item, Tensor):
+                        params.append(item)
         return params
 
     def train(self) -> None:
