@@ -66,6 +66,7 @@ class Module:
         return self
 
     def __call__(self, *args, **kwargs):
+        # .can add hooks here
         return self.forward(*args, **kwargs)
 
     def forward(self, *args, **kwargs):
@@ -150,6 +151,9 @@ class Module:
             elif isinstance(v, (list, tuple)):
                 for item in v:
                     if isinstance(item, Module): item.train()
+    
+    def inference(self) -> None:
+        self.eval()
 
     def eval(self) -> None:
         self.training = False

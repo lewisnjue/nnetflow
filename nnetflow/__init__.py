@@ -1,10 +1,8 @@
 from .engine import Tensor
 from .losses import (
-    mse_loss, 
-    rmse_loss, 
-    cross_entropy_loss, 
-    binary_cross_entropy_loss,
-    logits_binary_cross_entropy_loss
+    MSELoss,
+    RMSELoss,
+    CrossEntropyLoss,
 )
 from .visualize import draw_dot, visualize_model
 from .optim import SGD, Adam
@@ -22,11 +20,9 @@ except PackageNotFoundError:
 __all__ = [
     'Tensor',
     '__version__', 
-    'mse_loss',
-    'rmse_loss', 
-    'cross_entropy_loss', 
-    'binary_cross_entropy_loss',
-    'logits_binary_cross_entropy_loss',
+    'MSELoss',
+    'RMSELoss', 
+    'CrossEntropyLoss', 
     'SGD', 
     'Adam',
     'draw_dot',
