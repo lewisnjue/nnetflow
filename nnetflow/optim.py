@@ -1,13 +1,31 @@
+"""Optimization routines for training nnetflow models.
+
+The classes in this module implement parameter updates for tensors that require
+gradients. They are intentionally small and readable, making them useful for
+teaching how optimizers work under the hood.
+"""
+
 from nnetflow.engine import Tensor
 from typing import List
 from nnetflow.module import Module
 import numpy as np 
 class SGD(Module):
-    """Stochastic Gradient Descent optimizer with optional momentum."""
+    """Stochastic Gradient Descent optimizer with optional momentum.
+
+    Args:
+        params: Parameters to optimize.
+        lr: Learning rate.
+        momentum: Momentum coefficient.
+        nesterov: If ``True``, use Nesterov momentum.
+        use_max_norm: Whether to clip the parameter norm.
+        r: Maximum norm if clipping is enabled.
+        grad_clip: Whether to clip gradients by norm.
+        clip_value: Maximum allowed gradient norm.
+    """
     def __init__(self, params: List[Tensor],
      lr: float = 0.01, momentum: float = 0.0,
-     nesterov=False,use_max_norm:bool = False,
-     r: float = 1.0,grad_clip:bool = False,clip_value: float = 1.0) -> None:
+     nesterov: bool = False, use_max_norm: bool = False,
+     r: float = 1.0, grad_clip: bool = False, clip_value: float = 1.0) -> None:
         self.params = params
         self.lr = lr
         self.momentum = momentum

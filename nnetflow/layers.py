@@ -1,3 +1,14 @@
+"""Layer implementations for the nnetflow neural-network API.
+
+This module contains the reusable building blocks used to define models in the
+library: linear transformations, convolutions, normalization layers, pooling,
+embeddings, and attention. The classes inherit from :class:`nnetflow.module.Module`
+and expose a ``forward`` method plus trainable parameters stored as Tensor objects.
+
+The design is intentionally small and explicit so the runtime behavior remains easy
+to inspect and reason about while the autograd engine handles gradient propagation.
+"""
+
 import numpy as np 
 from nnetflow.engine import Tensor 
 from typing import Union, List, Tuple, Optional, Dict, Any
@@ -5,7 +16,12 @@ from nnetflow.module import Module
 import numpy.typing as npt
 
 class Linear(Module):
-    """Fully-connected (dense) layer: ``output = input @ weight + bias``."""
+    """Fully-connected (dense) layer: ``output = input @ weight + bias``.
+
+    This is the standard affine transformation used in many small models. The layer
+    stores a weight matrix of shape ``(in_features, out_features)`` and an optional
+    bias vector added after the matrix multiplication.
+    """
 
     def __init__(
         self,

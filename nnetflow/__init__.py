@@ -1,4 +1,21 @@
 from .engine import Tensor
+from .layers import (
+    Linear,
+    Conv1d,
+    Conv2d,
+    BatchNorm1d,
+    BatchNorm2d,
+    LayerNorm,
+    Embedding,
+    Dropout,
+    MCDropout,
+    Flatten,
+    MaxPool1d,
+    MaxPool2d,
+    MultiHeadAttention,
+    AveragePool2d,
+    GlobalAveragePool2d,
+)
 from .losses import (
     MSELoss,
     RMSELoss,
@@ -6,6 +23,7 @@ from .losses import (
 )
 from .visualize import draw_dot, visualize_model
 from .optim import SGD, Adam
+
 try:
     from importlib.metadata import version, PackageNotFoundError
 except Exception:  # pragma: no cover
@@ -19,12 +37,27 @@ except PackageNotFoundError:
 
 __all__ = [
     'Tensor',
-    '__version__', 
+    '__version__',
+    'Linear',
+    'Conv1d',
+    'Conv2d',
+    'BatchNorm1d',
+    'BatchNorm2d',
+    'LayerNorm',
+    'Embedding',
+    'Dropout',
+    'MCDropout',
+    'Flatten',
+    'MaxPool1d',
+    'MaxPool2d',
+    'MultiHeadAttention',
+    'AveragePool2d',
+    'GlobalAveragePool2d',
     'MSELoss',
-    'RMSELoss', 
-    'CrossEntropyLoss', 
-    'SGD', 
+    'RMSELoss',
+    'CrossEntropyLoss',
+    'SGD',
     'Adam',
     'draw_dot',
-    'visualize_model'
+    'visualize_model',
 ]

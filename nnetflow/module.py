@@ -1,3 +1,10 @@
+"""Utilities for model containers and parameter management.
+
+The :class:`Module` class acts as the base object for all layers and optimizer-aware
+neural-network blocks in the project. It manages parameter traversal, state saving,
+training/eval mode, and tensor casting across the model tree.
+"""
+
 import os
 import pickle
 import numpy as np
@@ -7,10 +14,19 @@ import nnetflow
 from nnetflow.engine import Tensor 
 
 class Module:
+    """Base class for all trainable model components.
+
+    Subclasses typically store tensors as attributes (for example weights and bias
+    terms) and implement ``forward``. The base class provides utilities for:
+
+    - traversing nested modules and tensor parameters,
+    - converting dtypes in-place,
+    - serializing model weights,
+    - switching between training and evaluation mode.
+    """
+
     def __init__(self):
-        """
-        Base Module class. 
-        """
+        """Initialize a module and default it to training mode."""
         self.training = True
 
     def to(self, dtype: npt.DTypeLike) -> 'Module':

@@ -1,15 +1,15 @@
-"""Visualization module for nnetflow using Graphviz.
+"""Visualization helpers for nnetflow using Graphviz.
 
-Provides a single powerful function `draw_dot` that visualizes:
+Provides a single powerful function ``draw_dot`` that visualizes:
 - Any Tensor's computation graph (individual operations, additions, matmuls, etc.)
-- Full model forward passes (when you call `model(input)` and then `draw_dot(output)`)
+- Full model forward passes (when you call ``model(input)`` and then ``draw_dot(output)``)
 
 The graph shows:
 - Ellipse nodes = tensors / parameters / inputs
-- Box nodes   = operations (Conv2d, @, +, relu, etc.)
-- Edges       = data flow (exactly the autograd DAG)
+- Box nodes = operations (Conv2d, @, +, relu, etc.)
+- Edges = data flow (exactly the autograd DAG)
 
-Requires: `pip install graphviz` (and the system Graphviz binary).
+Requires: ``pip install graphviz`` and the Graphviz system binary.
 """
 
 from graphviz import Digraph
