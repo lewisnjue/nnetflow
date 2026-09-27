@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.0.6] - 2026-09-27
+
+See the [v2.0.6 release notes](RELEASE_NOTES_2.0.6.md) for the complete list of changes, migration guidance, and examples.
+
 ## [2.0.5] - 2025-12-07
 
 ### Added
